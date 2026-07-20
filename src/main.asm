@@ -85,9 +85,32 @@ SCR_H_LINES     equ 200
 TYPE_SOLID      equ 1           ; blocks movement: walls, floors, crates
 TYPE_LADDER     equ 2           ; climbable column
 
-; Debug fill bytes until the tile renderer lands (both pixels same pen)
-FILL_SOLID      equ #0C         ; pen 2 = steel grey
-FILL_LADDER     equ #3C         ; pen 6 = rusty orange
+; Tile grid: the screen is 20x25 tiles of 8x8 pixels (4 bytes x 8
+; lines).  Tile rows coincide exactly with the CRTC's 8-line character
+; rows, which is what makes the tile blitter simple AND fast: all 8
+; lines of a tile are a constant #800 apart, never crossing a row.
+MAP_W           equ 20
+MAP_H           equ 25
+TILE_BYTES      equ 32          ; 4 bytes x 8 lines per tile
+
+; ----------------------------------------------------------------------
+; Player physics -- 8.8 fixed point (high byte = whole scanlines).
+;
+; Tuning: apex height = JUMP^2/(2*GRAVITY) lines, frames to apex =
+; JUMP/GRAVITY.  Current numbers: launch at 2.75 lines/frame against
+; 0.1875 lines/frame^2 of gravity -> ~20-line apex in ~15 frames:
+; clears the two-tile crate, bonks on the platform overhead.
+;
+; MAX_FALL must stay BELOW 8 (one tile): the collision step relies on
+; a falling body never skipping an entire slab between two frames.
+; ----------------------------------------------------------------------
+ST_GROUND       equ 0           ; walking on solids (or a ladder top)
+ST_CLIMB        equ 1           ; on a ladder: gravity suspended
+ST_AIR          equ 2           ; ballistic: jumping or falling
+GRAVITY         equ #0030       ; +0.1875 lines/frame^2, pulls down
+JUMP_VY         equ #FD40       ; -2.75 lines/frame at take-off
+MAX_FALL        equ #0400       ; terminal velocity: 4 lines/frame
+INP_VERT_MASK   equ #0C         ; (1<<INP_UP) | (1<<INP_DOWN)
 
         org #1000
 
@@ -123,15 +146,17 @@ start:
         call set_palette
         call clear_buffers
 
-        ; --- Paint the level geometry into BOTH buffers.  It is static,
-        ; so drawing it once is enough; the per-frame code only repairs
-        ; the small patch the sprite erase chews out of it.
+        ; --- Render the level tilemap into BOTH buffers.  It is static,
+        ; so drawing it once is enough; per frame we only re-blit the
+        ; handful of tiles under the sprite's old position.  A full
+        ; map render is ~7 frames of CPU -- fine here and at screen
+        ; transitions, never inside the frame loop.
         ld a,SCREEN_B/256
         ld (draw_page),a
-        call draw_geometry
+        call draw_tilemap
         ld a,SCREEN_A/256
         ld (draw_page),a
-        call draw_geometry
+        call draw_tilemap
 
         ; --- Video state: show buffer A, draw into buffer B.
         ld a,CRTC_R12_A
@@ -162,7 +187,7 @@ main_loop:
         call flip_buffers       ; hardware page flip -- tear-free by timing
         call read_input         ; keyboard matrix + joystick -> flag bits
         call update_player      ; walk/climb, filtered through collision
-        call erase_player       ; wipe old image (+ repair chewed ladders)
+        call erase_player       ; restore background tiles under old image
         call draw_player        ; draw the new one
         jr main_loop
 
@@ -361,93 +386,373 @@ sk_row:
         ret
 
 ; ======================================================================
-; update_player -- movement filtered through the collision system
+; update_player -- the player physics state machine
 ;
-; The pattern for every move is TRY-THEN-COMMIT: compute the
-; destination, probe the level there, and only write the new position
-; back if the probe approves.  The player is never inside a wall, so
-; nothing ever needs to be pushed back out.
+;   GROUND  walking on something solid (or a ladder top).  Can walk,
+;           jump (Fire, on the press edge), mount ladders (Up/Down),
+;           or walk off an edge and start to fall.
+;   CLIMB   hanging on a ladder: gravity suspended.  Up/Down climb
+;           (same find_ladder discipline as mounting, so the end-stops
+;           still come from data), Left/Right step off, Fire leaps off.
+;   AIR     ballistic.  Every frame: vy += GRAVITY (capped at
+;           MAX_FALL), position += vy.  Left/Right steer (air
+;           control), no double jumps, and holding Up/Down catches a
+;           ladder on the way past.
 ;
-; Horizontal = WALK: one byte (2 px) sideways, cancelled if the
-; destination box overlaps any SOLID rect.  Walls, crates and platform
-; slabs all block identically -- purely a matter of level data.
+; Vertical position is 8.8 fixed point: player_y stays the visible
+; whole scanline exactly as before, player_yfrac holds the 1/256ths.
+; The two bytes are adjacent, so LD HL,(player_yfrac) reads the whole
+; position and one store commits both.
 ;
-; Vertical = CLIMB: no free flight any more.  UP/DOWN move only if
-; find_ladder approves the destination (aligned with a ladder, whole
-; body inside its climb volume), with a 1-byte mount-assist snap.
-; Gravity and jumping arrive with the physics pass (Prompt 4) -- until
-; then walking off an edge leaves you hovering mid-air.
+; Landing and head-bump snapping lean on a level invariant: every
+; solid's top and bottom edge is tile-aligned (multiple of 8) because
+; the rects are compiled from the tile map.  With MAX_FALL below one
+; tile, the surface a falling body crossed this frame is simply the
+; multiple of 8 its feet just passed -- snap there, done.  The snap
+; also keeps y EVEN, which the ladder code's 2-line steps require.
+;
+; Every move is still TRY-THEN-COMMIT via the Prompt 2 probes: the
+; player is never inside a wall, so nothing needs pushing back out.
 ; ======================================================================
 update_player:
-        ; ---------------- LEFT ----------------
+        ld a,(player_state)
+        or a
+        jr z,upd_ground
+        dec a                   ; ST_CLIMB?
+        jr z,upd_climb
+        jp upd_air
+
+; --------------------------- GROUNDED ---------------------------------
+upd_ground:
+        ld a,(input_new)        ; Fire = jump, on the PRESS edge only
+        bit INP_FIRE,a
+        jr z,ug_no_jump
+        call start_jump         ; airborne with full upward velocity...
+        jp move_horizontal      ; ...and may steer this same frame
+ug_no_jump:
+        ld a,(input_held)       ; Up/Down: try to mount a ladder
+        bit INP_UP,a
+        jr z,ug_no_up
+        ld a,(player_y)
+        sub 2
+        ld c,a
+        call try_mount
+        ret c                   ; mounted: climbing consumed the frame
+ug_no_up:
         ld a,(input_held)
-        bit INP_LEFT,a
-        jr z,mv_no_left
-        ld a,(player_x)
-        or a                    ; screen-edge guard
-        jr z,mv_no_left
-        dec a                   ; candidate X, one byte left
+        bit INP_DOWN,a
+        jr z,ug_no_down
+        ld a,(player_y)
+        add a,2
+        ld c,a
+        call try_mount
+        ret c
+ug_no_down:
+        call move_horizontal    ; walk...
+        call is_supported       ; ...then is the ground still there?
+        or a
+        ret nz                  ; something real underfoot: stay put
+        jp start_fall           ; walked off an edge: drop from rest
+
+; --------------------------- CLIMBING ---------------------------------
+upd_climb:
+        ld a,(input_new)        ; Fire: leap off the ladder
+        bit INP_FIRE,a
+        jr z,uc_no_jump
+        call start_jump
+        jp move_horizontal
+uc_no_jump:
+        ld a,(input_held)       ; Up/Down: climb at 2 lines/frame
+        bit INP_UP,a
+        jr z,uc_no_up
+        ld a,(player_y)
+        sub 2
+        ld c,a
+        call climb_step
+uc_no_up:
+        ld a,(input_held)
+        bit INP_DOWN,a
+        jr z,uc_no_down
+        ld a,(player_y)
+        add a,2
+        ld c,a
+        call climb_step
+uc_no_down:
+        call move_horizontal    ; Left/Right: try to step off sideways
+        ld a,e                  ; E=1 if a step was committed
+        or a
+        ret z                   ; still holding the rails
+        call is_supported       ; stepped off: onto ground, or into air?
+        or a
+        jp z,start_fall
+        ld a,ST_GROUND
+        ld (player_state),a
+        ret
+
+; --------------------------- AIRBORNE ---------------------------------
+upd_air:
+        call move_horizontal    ; air control
+        ; ---- gravity, with terminal velocity
+        ld hl,(player_vy)
+        ld de,GRAVITY
+        add hl,de
+        bit 7,h                 ; still moving upwards? then no cap
+        jr nz,ua_vy_ok
+        ld a,h
+        cp MAX_FALL/256
+        jr c,ua_vy_ok
+        ld hl,MAX_FALL
+ua_vy_ok:
+        ld (player_vy),hl
+        ; ---- integrate: one 16-bit add moves fraction and line
+        ex de,hl                ; DE = vy
+        ld hl,(player_yfrac)    ; L = fraction, H = whole line
+        ld b,h                  ; B = the line we are leaving
+        add hl,de
+        ld a,h
+        cp b                    ; did the whole line change?
+        jr z,ua_store           ; no: just keep the new fraction
+        jr c,ua_rising
+        ; ---- FALLING: would the body end up inside something solid?
+        ld c,a
+        push hl
+        call solid_at_y
+        pop hl
+        jr nc,ua_store          ; clear air: commit the move
+        ; Landed.  Snap the feet onto the tile-aligned surface they
+        ; crossed this frame and go back to walking.
+        ld a,h
+        add a,SPR_H_LINES       ; feet line after the move...
+        and #F8                 ; ...the surface is the multiple of 8
+        sub SPR_H_LINES         ;    just above them.  Stand exactly on
+        ld (player_y),a         ;    it (y comes out even, too)
+        xor a
+        ld (player_yfrac),a
+        ld hl,0
+        ld (player_vy),hl
+        ld a,ST_GROUND
+        ld (player_state),a
+        ; fall-height hook (future: damage, landing thud, dust puff)
+        ld a,(fall_start)
         ld b,a
         ld a,(player_y)
+        sub b                   ; lines dropped since the arc's apex
+        jr nc,ua_keep_fall
+        xor a                   ; landed above the apex? then no fall
+ua_keep_fall:
+        ld (last_fall),a
+        ret
+ua_rising:
+        ; ---- RISING: head into a slab?
         ld c,a
-        ld d,SPR_W_BYTES        ; probe with the full sprite box
-        ld e,SPR_H_LINES
-        call probe_level
-        rra                     ; TYPE_SOLID is bit 0 -> carry
-        jr c,mv_no_left         ; something solid there: blocked
-        ld hl,player_x
-        dec (hl)                ; commit
-mv_no_left:
-        ; ---------------- RIGHT ----------------
+        push hl
+        call solid_at_y
+        pop hl
+        jr nc,ua_store          ; clear: commit
+        ld a,h                  ; bonk.  Park exactly under the ceiling
+        and #F8
+        add a,8                 ; = first free line below the slab
+        ld (player_y),a
+        xor a
+        ld (player_yfrac),a
+        ld hl,0                 ; upward speed dies here; gravity brings
+        ld (player_vy),hl       ; us back down over the next frames
+        ret
+ua_store:
+        ld (player_yfrac),hl    ; one store commits fraction AND line
+        ld a,h                  ; track the highest point of the arc:
+        ld hl,fall_start        ; fall distance is measured from the
+        cp (hl)                 ; apex, not from the take-off point
+        jr nc,ua_grab
+        ld (hl),a
+ua_grab:
+        ; ---- catch a ladder in flight: hold Up/Down while lined up
+        ld a,(input_held)
+        and INP_VERT_MASK
+        ret z
+        ld a,(player_y)
+        and #FE                 ; climbing works in 2-line steps: round
+        ld c,a                  ; to even before the containment test
+        ld a,(player_x)
+        ld b,a
+        call find_ladder
+        ret nc
+        ld (player_x),a         ; caught the rails
+        ld a,c
+        ld (player_y),a
+        xor a
+        ld (player_yfrac),a
+        ld hl,0
+        ld (player_vy),hl
+        ld a,ST_CLIMB
+        ld (player_state),a
+        ret
+
+; ----------------------------------------------------------------------
+; move_horizontal -- shared walk/steer: one byte (2 px) left/right per
+; frame, cancelled if the destination box overlaps a solid.
+; Out: E = 1 if a step was committed (the climb code wants to know).
+; ----------------------------------------------------------------------
+move_horizontal:
+        ld e,0
+        ld a,(input_held)
+        bit INP_LEFT,a
+        jr z,mh_no_left
+        ld a,(player_x)
+        or a                    ; screen-edge guard
+        jr z,mh_no_left
+        dec a
+        call solid_at_x         ; carry = a solid is in the way
+        jr c,mh_no_left
+        ld (player_x),a
+        ld e,1
+mh_no_left:
         ld a,(input_held)
         bit INP_RIGHT,a
-        jr z,mv_no_right
+        jr z,mh_no_right
         ld a,(player_x)
         cp SCR_W_BYTES-SPR_W_BYTES
-        jr nc,mv_no_right
+        jr nc,mh_no_right
         inc a
+        call solid_at_x
+        jr c,mh_no_right
+        ld (player_x),a
+        ld e,1
+mh_no_right:
+        ret
+
+; ----------------------------------------------------------------------
+; Probe helpers -- build a box for probe_level, reduce the answer to
+; something branchable.
+; ----------------------------------------------------------------------
+; solid_at_x: A = candidate x -> carry set if the body would overlap a
+; solid there.  A and E survive (A comes back for the commit).
+solid_at_x:
+        push de
         ld b,a
         ld a,(player_y)
         ld c,a
         ld d,SPR_W_BYTES
         ld e,SPR_H_LINES
-        call probe_level
-        rra
-        jr c,mv_no_right
-        ld hl,player_x
-        inc (hl)
-mv_no_right:
-        ; ---------------- UP (climb) ----------------
-        ld a,(input_held)
-        bit INP_UP,a
-        jr z,mv_no_up
-        ld a,(player_y)
-        sub 2                   ; climb speed: 2 lines/frame
-        jr c,mv_no_up
-        ld c,a                  ; C = destination Y
+        call probe_level        ; preserves BC (so B still holds x)
+        rra                     ; TYPE_SOLID bit -> carry
+        ld a,b
+        pop de
+        ret
+
+; solid_at_y: C = candidate y -> carry set if the body would overlap a
+; solid there (x unchanged).
+solid_at_y:
+        push de
         ld a,(player_x)
         ld b,a
-        call find_ladder        ; carry = climbable, A = the ladder's x
-        jr nc,mv_no_up
+        ld d,SPR_W_BYTES
+        ld e,SPR_H_LINES
+        call probe_level
+        rra
+        pop de
+        ret
+
+; support_at: A = probe flags of the 1-line strip directly under the
+; feet -- this is why probe_level takes an arbitrary box.
+support_at:
+        ld a,(player_x)
+        ld b,a
+        ld a,(player_y)
+        add a,SPR_H_LINES
+        ld c,a
+        ld d,SPR_W_BYTES
+        ld e,1
+        jp probe_level
+
+; ----------------------------------------------------------------------
+; is_supported -- is there something to STAND on directly underfoot?
+; Out: A nonzero if supported (test with OR A).
+;
+; Support is a SOLID in the strip under the feet, or standing exactly
+; at a ladder's through-hole.  The subtlety: the raw LADDER bit must
+; NOT count as support, or hanging in mid-air beside a ladder column
+; would read as ground (the column spans every row it passes).  The
+; head-room convention identifies the real standing spot: a ladder
+; rect starts 16 lines above the surface it pierces, so "feet ==
+; ladder.y+16" IS that surface's hole -- and nothing else is.
+; ----------------------------------------------------------------------
+is_supported:
+        call support_at
+        and TYPE_SOLID
+        ret nz                  ; solid underfoot: done
+        ld a,(player_y)
+        add a,SPR_H_LINES
+        ld c,a                  ; C = feet line
+        ld a,(player_x)
+        ld b,a                  ; B = player x
+        ld ix,(current_rects)
+is_next:
+        ld a,(ix+0)
+        cp #FF
+        jr z,is_none
+        ld a,(ix+4)
+        cp TYPE_LADDER
+        jr nz,is_skip
+        ld a,(ix+2)             ; ladder.y ...
+        add a,SPR_H_LINES       ; ... +16 = its standing level
+        cp c
+        jr nz,is_skip           ; feet are not at that level
+        ld a,b                  ; x-spans touch iff |px - lx| <= 3
+        sub (ix+0)
+        add a,3
+        cp 7
+        jr nc,is_skip
+        ld a,1                  ; standing in the through-hole
+        ret
+is_skip:
+        repeat 5
+        inc ix
+        rend
+        jr is_next
+is_none:
+        xor a
+        ret
+
+; ----------------------------------------------------------------------
+; climb_step: C = destination y.  Commits the move (with rail snap) if
+; find_ladder approves; carry mirrors success.
+; try_mount:  the same, but also enters the CLIMB state -- used when
+; stepping onto a ladder from the ground.
+; ----------------------------------------------------------------------
+try_mount:
+        call climb_step
+        ret nc
+        ld a,ST_CLIMB
+        ld (player_state),a     ; (loads don't touch carry: still set)
+        ret
+climb_step:
+        ld a,(player_x)
+        ld b,a
+        call find_ladder        ; carry = approved, A = the ladder's x
+        ret nc
         ld (player_x),a         ; mount assist: snap onto the rails
         ld a,c
         ld (player_y),a
-mv_no_up:
-        ; ---------------- DOWN (climb) ----------------
-        ld a,(input_held)
-        bit INP_DOWN,a
-        jr z,mv_no_down
+        ret
+
+; ----------------------------------------------------------------------
+; start_jump / start_fall -- enter the AIR state: from a Fire press,
+; or from losing the ground under our feet.
+; ----------------------------------------------------------------------
+start_fall:
+        ld hl,0                 ; drop from rest
+        jr sj_common
+start_jump:
+        ld hl,JUMP_VY           ; leap: full upward velocity at once
+sj_common:
+        ld (player_vy),hl
+        xor a
+        ld (player_yfrac),a
         ld a,(player_y)
-        add a,2
-        ld c,a
-        ld a,(player_x)
-        ld b,a
-        call find_ladder
-        jr nc,mv_no_down
-        ld (player_x),a
-        ld a,c
-        ld (player_y),a
-mv_no_down:
+        ld (fall_start),a       ; the apex tracker starts here
+        ld a,ST_AIR
+        ld (player_state),a
         ret
 
 ; ======================================================================
@@ -462,14 +767,7 @@ erase_player:
         ld b,(hl)               ; B = old X
         inc hl
         ld c,(hl)               ; C = old Y
-        push bc
-        call erase_block_8x16
-        pop bc
-        ; The erase blindly wipes to pen 0; if the player was on a
-        ; ladder it just chewed a hole in it, so repaint any ladder the
-        ; block touched.  (Prompt 3 replaces both erase and repair with
-        ; a proper "restore background tiles" pass.)
-        jp repair_ladders
+        jp restore_tiles        ; re-blit the map tiles under that block
 
 draw_player:
         call prev_slot
@@ -591,39 +889,6 @@ ds_same_row:
         ret
 
 ; ======================================================================
-; erase_block_8x16 -- wipe a sprite-sized block back to pen 0
-;
-; In : B = X in bytes, C = Y in lines
-; Once the tilemap renderer exists (Prompt 3) this becomes "restore
-; background tiles under the old position" -- same walk, different fill.
-; ======================================================================
-erase_block_8x16:
-        call screen_addr
-        ld c,SPR_H_LINES
-eb_row:
-        push hl
-        repeat 4
-        ld (hl),0
-        inc hl
-        rend
-        pop hl
-        ld a,h                  ; same next-line step as the sprite
-        add a,8
-        ld h,a
-        and #38
-        jr nz,eb_same_row
-        ld a,l
-        add a,#50
-        ld l,a
-        ld a,h
-        adc a,#C0
-        ld h,a
-eb_same_row:
-        dec c
-        jr nz,eb_row
-        ret
-
-; ======================================================================
 ;
 ;   COLLISION
 ;
@@ -699,7 +964,7 @@ bo_miss:
 ; "is my head hitting a slab"), which is why the box is parameterised.
 ; ----------------------------------------------------------------------
 probe_level:
-        ld ix,level_rects
+        ld ix,(current_rects)   ; via pointer: screen changes just re-aim it
         ld l,0                  ; L accumulates the type bits
 pl_next:
         ld a,(ix+0)
@@ -747,7 +1012,7 @@ pl_done:
 ; EVEN y in level_rects or the end-stops can be stepped over.
 ; ----------------------------------------------------------------------
 find_ladder:
-        ld ix,level_rects
+        ld ix,(current_rects)
 fl_next:
         ld a,(ix+0)
         cp #FF
@@ -785,19 +1050,179 @@ fl_none:
 
 ; ======================================================================
 ;
-;   LEVEL RENDERING -- placeholder debug fills
+;   TILE RENDERER
 ;
-; Flat colour rectangles so the collision geometry is visible and
-; playable *today*.  Prompt 3 swaps all of this for the real 8x8 tile
-; renderer; fill_rect itself stays useful forever (HUD bars, wipes).
+; The level background is a 20x25 grid of 8x8-pixel tiles: 500 map
+; bytes describe a screen, each indexing a 32-byte tile (4 bytes x
+; 8 lines of raw Mode 0 pixels -- tiles are opaque, no masks).
+;
+; Everything is read through pointers (current_map, current_tileset,
+; current_rects), so the flip-screen loader of a later pass switches
+; screens by re-aiming three words -- the renderer never changes.
+; The map, tiles and collision rects are all generated from one ASCII
+; source by tools/level_gen.py.
 ;
 ; ======================================================================
+
+; ----------------------------------------------------------------------
+; draw_tilemap -- render the whole 20x25 map into the DRAW buffer
+;
+; Costs ~7 frames; used at level entry / screen transitions only.
+; (If transitions ever need to be snappier: render one buffer and
+; LDIR it into the other, or switch draw_tile to a stack-abusing
+; compiled-tile scheme.  No need yet.)
+; ----------------------------------------------------------------------
+draw_tilemap:
+        ld e,0                  ; E = tile row
+dm_row:
+        ld d,0                  ; D = tile column
+dm_col:
+        call draw_map_tile      ; preserves D,E
+        inc d
+        ld a,d
+        cp MAP_W
+        jr c,dm_col
+        inc e
+        ld a,e
+        cp MAP_H
+        jr c,dm_row
+        ret
+
+; ----------------------------------------------------------------------
+; draw_map_tile -- look up the map and blit ONE tile cell
+;
+; In : D = tile column (0..19), E = tile row (0..24)
+; Out: D,E preserved; everything else trashed.
+; Silently clips if D/E are off the map, so callers can over-scan the
+; sprite neighbourhood without edge special-cases.
+; ----------------------------------------------------------------------
+draw_map_tile:
+        ld a,d
+        cp MAP_W
+        ret nc                  ; off the right edge: nothing to do
+        ld a,e
+        cp MAP_H
+        ret nc                  ; off the bottom
+        push de
+        ; --- fetch the tile index: (current_map) + row*20 + column
+        ld l,e
+        ld h,0
+        add hl,hl               ; row*2
+        add hl,hl               ; row*4
+        ld b,h
+        ld c,l
+        add hl,hl               ; row*8
+        add hl,hl               ; row*16
+        add hl,bc               ; row*20
+        ld c,d
+        ld b,0
+        add hl,bc               ; + column
+        ld bc,(current_map)
+        add hl,bc
+        ld a,(hl)               ; A = tile index
+        push af
+        ; --- screen address of the cell: x = col*4 bytes, y = row*8
+        ld a,d
+        add a,a
+        add a,a
+        ld b,a                  ; B = x byte
+        ld a,e
+        add a,a
+        add a,a
+        add a,a
+        ld c,a                  ; C = scanline
+        call screen_addr        ; HL = destination (trashes A,DE)
+        ex de,hl                ; draw_tile wants the dest in DE
+        pop af
+        call draw_tile
+        pop de
+        ret
+
+; ----------------------------------------------------------------------
+; draw_tile -- blit one 8x8 tile: the innermost hot loop
+;
+; In : A  = tile index (0..255)
+;      DE = screen address of the cell's top-left byte.  MUST be on a
+;           character-row boundary (y multiple of 8): that guarantee is
+;           what lets every line step be a constant +#800 with no
+;           row-crossing test (compare the sprite routine, which can't
+;           assume alignment and pays for the wrap check every line).
+; Out: A,BC,HL,DE trashed.
+;
+; The row copy is LDI-unrolled: 4 bytes x 8 lines = 32 LDIs, with a
+; 6-instruction "down one line, back 4 bytes" (+#7FC) seam between
+; lines.  ~700 T-states per tile.
+; ----------------------------------------------------------------------
+draw_tile:
+        ld l,a                  ; HL = (current_tileset) + index*32
+        ld h,0
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        ld bc,(current_tileset)
+        add hl,bc
+        repeat 7
+        ldi                     ; one 4-byte tile line...
+        ldi
+        ldi
+        ldi
+        ld a,e                  ; ...then DE += #800-4: next scanline,
+        add a,#FC               ;    same column (no wrap possible
+        ld e,a                  ;    inside an aligned character row)
+        ld a,d
+        adc a,#07
+        ld d,a
+        rend
+        ldi                     ; 8th line: no seam needed after it
+        ldi
+        ldi
+        ldi
+        ret
+
+; ----------------------------------------------------------------------
+; restore_tiles -- repaint the background under a sprite's old image
+;
+; In : B = x byte, C = y line of an 8x16-pixel block.
+; The block can straddle at most 2 tile columns and 3 tile rows; we
+; simply re-blit that whole neighbourhood from the map (~6 tiles,
+; ~4.5% of a frame).  This replaces the old black-box erase AND the
+; ladder-repair special case: with a tile background, restoring is
+; just drawing the truth again.
+; ----------------------------------------------------------------------
+restore_tiles:
+        ld a,b                  ; D = leftmost tile column = x/4
+        srl a
+        srl a
+        ld d,a
+        ld a,c                  ; E = topmost tile row = y/8
+        srl a
+        srl a
+        srl a
+        ld e,a
+        ; Walk the 2x3 neighbourhood in a zig-zag so D/E themselves do
+        ; the bookkeeping; draw_map_tile preserves them and clips the
+        ; cells that fall off the map's right/bottom edge.
+        call draw_map_tile      ; (D  , E  )
+        inc e
+        call draw_map_tile      ; (D  , E+1)
+        inc e
+        call draw_map_tile      ; (D  , E+2)
+        inc d
+        call draw_map_tile      ; (D+1, E+2)
+        dec e
+        call draw_map_tile      ; (D+1, E+1)
+        dec e
+        jp draw_map_tile        ; (D+1, E  ) -- tail call
 
 ; ----------------------------------------------------------------------
 ; fill_rect -- flood a rectangle of screen bytes with one value
 ; In : B=x (bytes)  C=y (lines)  D=w (>=1)  E=h (>=1)
 ;      A = fill byte (normally the same pen in both Mode 0 pixels)
 ; Out: D preserved, everything else working-trashed.  Draw buffer only.
+; No longer part of level rendering -- kept for HUD bars, screen wipes
+; and debug overlays.
 ; ----------------------------------------------------------------------
 fill_rect:
         push af
@@ -829,70 +1254,6 @@ fr_same:
         dec e
         jr nz,fr_line
         ret
-
-; ----------------------------------------------------------------------
-; draw_geometry -- paint every level rect in its debug colour
-; (called once per buffer at init; fill_rect leaves IX alone, so the
-; list walk needs no saving)
-; ----------------------------------------------------------------------
-draw_geometry:
-        ld ix,level_rects
-geo_next:
-        ld a,(ix+0)
-        cp #FF
-        ret z
-        ld a,(ix+4)             ; type picks the colour
-        cp TYPE_LADDER
-        ld a,FILL_SOLID         ; (ld doesn't touch the flags)
-        jr nz,geo_fill
-        ld a,FILL_LADDER
-geo_fill:
-        ld b,(ix+0)
-        ld d,(ix+1)
-        ld c,(ix+2)
-        ld e,(ix+3)
-        call fill_rect
-        repeat 5
-        inc ix
-        rend
-        jr geo_next
-
-; ----------------------------------------------------------------------
-; repair_ladders -- repaint any ladder the sprite erase just damaged
-; In : B,C = x,y of the erased 8x16 block
-; Only ladders can legitimately intersect the player (solids block),
-; so only ladders ever need repair.  Repainting the whole ladder is
-; simple and bounded (4 bytes x 64 lines); while not climbing this
-; costs nothing because no ladder overlaps the block.
-; ----------------------------------------------------------------------
-repair_ladders:
-        ld d,SPR_W_BYTES        ; the erased block as a probe box
-        ld e,SPR_H_LINES
-        ld ix,level_rects
-rl_next:
-        ld a,(ix+0)
-        cp #FF
-        ret z
-        ld a,(ix+4)
-        cp TYPE_LADDER
-        jr nz,rl_skip
-        call box_overlap
-        jr nc,rl_skip
-        push bc                 ; keep the block coords for further tests
-        push de
-        ld b,(ix+0)             ; repaint this whole ladder
-        ld d,(ix+1)
-        ld c,(ix+2)
-        ld e,(ix+3)
-        ld a,FILL_LADDER
-        call fill_rect
-        pop de
-        pop bc
-rl_skip:
-        repeat 5
-        inc ix
-        rend
-        jr rl_next
 
 ; ======================================================================
 ; set_palette -- program all 16 inks + border via the Gate Array
@@ -1004,39 +1365,14 @@ spr_mechanic:   ; 8x16 px = 4 bytes x 16 lines, (mask,data) interleaved
         defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
 
 ; ----------------------------------------------------------------------
-; level_rects -- static collision geometry for the demo screen
-;
-; Record: {x, w, y, h, type}  --  x/w in bytes, y/h in lines.
-; List ends with x = #FF.  Hand-authored for now; from Prompt 3 on,
-; each screen's tilemap generates (or replaces) this.
-;
-; Authoring rules baked into the collision code:
-;  * platform surfaces at EVEN y (the climb step is 2 lines)
-;  * a ladder rect is the CLIMB VOLUME: from upper_surface-16 (head
-;    room above the slab) down to the lower surface; 4 bytes wide
-;  * where a ladder passes THROUGH a slab, split the slab and leave a
-;    4-byte gap at the ladder's x
-;
-; The demo screen: shaft walls both sides, floor, a crate to walk
-; into, three platforms connected by three offset ladders -- a small
-; zig-zag climb from the machine deck towards the top of the screen.
+; Level data -- GENERATED from ASCII art by tools/level_gen.py.
+; Provides: tileset (8x8 tile pixels), tilemap01 (20x25 indices) and
+; level_rects (collision geometry compiled from the same map, so the
+; picture and the physics can never disagree).
+; Authoring rules (head-room rows above platforms, even-y surfaces,
+; ladder gap conventions) are documented in the generator.
 ; ----------------------------------------------------------------------
-level_rects:
-        ;      x,  w,   y,   h,  type
-        defb   0, 80, 192,   8, TYPE_SOLID     ; machine-deck floor
-        defb   0,  4,   0, 192, TYPE_SOLID     ; left shaft wall
-        defb  76,  4,   0, 192, TYPE_SOLID     ; right shaft wall
-        defb  20,  8, 176,  16, TYPE_SOLID     ; crate on the floor
-        defb   4, 36, 144,   8, TYPE_SOLID     ; platform 1, left of gap
-        defb  44, 32, 144,   8, TYPE_SOLID     ; platform 1, right of gap
-        defb   4,  8,  96,   8, TYPE_SOLID     ; platform 2, left of gap
-        defb  16, 60,  96,   8, TYPE_SOLID     ; platform 2, right of gap
-        defb   4, 56,  48,   8, TYPE_SOLID     ; platform 3, left of gap
-        defb  64, 12,  48,   8, TYPE_SOLID     ; platform 3, right of gap
-        defb  40,  4, 128,  64, TYPE_LADDER    ; floor      -> platform 1
-        defb  12,  4,  80,  64, TYPE_LADDER    ; platform 1 -> platform 2
-        defb  60,  4,  32,  64, TYPE_LADDER    ; platform 2 -> platform 3
-        defb #FF                               ; end of list
+        include "level01.asm"
 
 ; ----------------------------------------------------------------------
 ; line_offsets -- offset of each scanline's first byte within a 16K
@@ -1066,8 +1402,22 @@ shown_r12:      defb 0          ; CRTC R12 value currently displayed
 draw_page:      defb 0          ; high byte of the DRAW buffer (#40/#C0)
 buf_index:      defb 0          ; 0/1 - selects the prev_pos slot below
 
+; Current-screen pointers: the flip-screen loader will re-aim these
+; when the player moves between levels of the shaft.
+current_map:     defw tilemap01 ; 20x25 tile indices being displayed
+current_tileset: defw tileset   ; pixel data the indices refer to
+current_rects:   defw level_rects ; collision geometry of this screen
+
 player_x:       defb 38         ; byte column (0..76), start mid-deck
-player_y:       defb 176        ; scanline: standing on the floor (192-16)
+player_yfrac:   defb 0          ; fractional Y, 1/256 line.  MUST sit
+player_y:       defb 176        ; directly before player_y: the pair is
+                                ; one little-endian 8.8 word (L=frac,
+                                ; H=line) for the physics integrator.
+player_state:   defb ST_GROUND  ; ST_GROUND / ST_CLIMB / ST_AIR
+player_vy:      defw 0          ; vertical velocity, signed 8.8
+fall_start:     defb 176        ; highest y reached in the current arc
+last_fall:      defb 0          ; lines dropped on the last landing
+                                ; (hook for fall damage / landing thud)
 prev_pos:       defb 38,176     ; where the player was drawn in buffer B
                 defb 38,176     ; ... and in buffer A
 key_matrix:     defs 10,#FF     ; raw matrix rows (active low, #FF = idle)

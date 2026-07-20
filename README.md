@@ -29,9 +29,10 @@ Load the DSK in any CPC emulator (Caprice32, WinAPE, ACE, CPCEC, ...) as a
 
 **Controls:** cursor keys + Space, or joystick 0. Walk left/right (walls,
 crates and platform slabs block you), climb ladders with up/down — line up
-within a byte of the rails and the mount-assist snaps you on. Gravity and
-jumping arrive with the physics pass, so walking off an edge currently leaves
-you hovering.
+within a byte of the rails and the mount-assist snaps you on. Space/Fire
+jumps (also leaps off a ladder); gravity does the rest: real ballistic arcs
+with air control, head bumps on slab undersides, edges you can walk off,
+and ladder rails you can catch in mid-fall by holding up/down.
 
 ## Technical design
 
@@ -80,14 +81,27 @@ a rock-steady screen throughout.
 | `read_input` / `scan_keyboard` | Full 10-row matrix scan through the PPI/AY-3-8912 handshake; merges cursors+Space with joystick 0; also computes *newly pressed* bits for jump edge-detection |
 | `screen_addr` | Line-offset table lookup (generated at assembly time) + buffer base OR + X — no multiplies at runtime |
 | `draw_sprite_8x16` | Masked software sprite: `screen = (screen AND mask) OR data`, unrolled 4-byte rows, classic `+#800` interleave stepping. ~4,600 T-states ≈ 6% of a frame |
-| `erase_block_8x16` | Wipes the old sprite position (becomes "redraw background tiles" once the tilemap exists) |
 | `box_overlap` | The fundamental AABB test: IX rect vs a B/C/D/E box, carry = hit. Exclusive edges, so "standing on" never reads as "stuck in" |
-| `probe_level` | Walks `level_rects` with `box_overlap`, ORs together the type bits (SOLID / LADDER) of everything a probe box touches |
+| `probe_level` | Walks the current rect list with `box_overlap`, ORs together the type bits (SOLID / LADDER) of everything a probe box touches |
 | `find_ladder` | Climb rules: x within 1 byte of the rails (then snapped), whole body inside the ladder's climb volume — end-stops fall out of the data, no "top of ladder" special case |
-| `fill_rect` / `draw_geometry` / `repair_ladders` | Placeholder flat-colour level rendering until the tile pass; `fill_rect` stays useful forever |
+| `draw_tilemap` / `draw_map_tile` | Full-screen render of the 20×25 map (~7 frames, transitions only) and the single-cell blit it is built from |
+| `draw_tile` | The hot loop: 32 unrolled LDIs per 8×8 tile. Tiles sit on CRTC character rows, so every line step is a constant `+#800` — no wrap test, unlike the sprite |
+| `restore_tiles` | Re-blits the ≤2×3 tile neighbourhood under the sprite's old image — replaces both the black-box erase and the ladder-repair special case |
+| `fill_rect` | General rectangle fill, kept for HUD bars, wipes and debug overlays |
+| `update_player` | The physics state machine: GROUND / CLIMB / AIR. 8.8 fixed-point vertical velocity (`player_yfrac`+`player_y` read as one word), gravity with terminal velocity capped below one tile so falls can't tunnel |
+| `is_supported` | "Can I stand here?": a solid under the feet, or feet exactly at a ladder's through-hole (`ladder.y+16`, from the head-room convention). The raw ladder bit deliberately doesn't count — that would let you stand on air beside a ladder |
+| `start_jump` / `start_fall` | Enter AIR with `JUMP_VY` or from rest; both arm the apex tracker that feeds the fall-height hook (`last_fall`) for future damage |
 
-Sprites are authored as ASCII art and converted with
-`tools/sprite_gen.py` — edit the art, re-run, paste the `defb` lines.
+All art is authored as ASCII, one character per pixel:
+
+- **Sprites**: `tools/sprite_gen.py` — edit the art, re-run, paste the
+  masked `defb` lines.
+- **Levels**: `tools/level_gen.py` — tile art plus a 25×20 character map.
+  The build regenerates `src/level01.asm` from it, emitting the tileset,
+  the tilemap **and the collision rects compiled from the same map** —
+  solids greedy-merged into rectangles, each ladder the bounding box of
+  its tile column. One source of truth: the picture and the physics can
+  never disagree, and the Z80 collision code never changes.
 
 ### Why the erase code tracks two positions
 
@@ -100,9 +114,12 @@ buffer **two** frames ago, not last frame's. The engine keeps one previous
 1. ~~Engine foundation~~ — video, frame sync, input, masked sprites *(done)*
 2. ~~Collision~~ — AABB tests between the player and typed geometry rects;
    walls/crates/slabs block, ladders climb with mount-assist snap *(done)*
-3. **Level drawing** — 8×8 Mode 0 tile renderer reading a 20×25 tilemap;
-   flip-screen advance when the player exits the top
-4. **Physics** — gravity + jump: Fire applies upward velocity that decays per
-   frame until a solid tile stops the fall
+3. ~~Level drawing~~ — 8×8 tile renderer over a generated 20×25 tilemap,
+   tile-restore under the sprite, collision rects compiled from the map
+   *(done — flip-screen advance moves to the physics/progression pass)*
+4. ~~Physics~~ — GROUND/CLIMB/AIR state machine, 8.8 fixed-point gravity and
+   jump arcs, landing/head-bump snapping to tile-aligned surfaces, walk-off
+   falls, mid-air ladder grabs, fall-height hook for future damage *(done)*
 5. Hazards (steam vents on the 300 Hz tick timer, patrolling drones), keycards
-   and locked hatches, level data in the second 64K, AY sound
+   and locked hatches, flip-screen progression, level data in the second 64K,
+   AY sound
