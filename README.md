@@ -25,7 +25,10 @@ Requires [rasm](https://github.com/EdouardBERGE/rasm) and
 ```
 
 Load the DSK in any CPC emulator (Caprice32, WinAPE, ACE, CPCEC, ...) as a
-6128 and type `RUN"SHAFT`.
+6128 and type `RUN"SHAFT`. That boots the BASIC loader (`src/shaft.bas`):
+it draws the REVIVE8BIT title screen (`docs/revive8b.scr`, inks per
+`docs/revive8b.txt`), waits for Space — or 10 seconds — then loads and
+starts the game.
 
 **Controls:** cursor keys + Space, or joystick 0. Walk left/right (walls,
 crates and platform slabs block you), climb ladders with up/down — line up
