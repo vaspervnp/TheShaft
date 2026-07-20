@@ -8,8 +8,8 @@ IDSK="${IDSK:-iDSK}"
 
 mkdir -p build
 
-# Regenerate level data (tiles + map + collision rects) from ASCII art.
-python3 tools/level_gen.py > src/level01.asm
+# Regenerate all level data (tiles, font, maps, collision, drones).
+python3 tools/level_gen.py > src/levels.asm
 
 # Assemble to a raw binary (org #1000 is set in the source).
 "$RASM" src/main.asm -ob build/shaft.bin

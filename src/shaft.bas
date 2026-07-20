@@ -12,5 +12,4 @@
 120 IF TIME-t<3000 THEN 110
 130 ' 47 = Space; TIME ticks 300/s so 3000 = 10 seconds
 140 BORDER 0:FOR i=0 TO 15:INK i,0:NEXT
-150 LOAD"shaft.bin",&1000
-160 CALL &1000
+150 RUN"shaft.bin

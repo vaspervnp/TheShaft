@@ -94,6 +94,12 @@ a rock-steady screen throughout.
 | `update_player` | The physics state machine: GROUND / CLIMB / AIR. 8.8 fixed-point vertical velocity (`player_yfrac`+`player_y` read as one word), gravity with terminal velocity capped below one tile so falls can't tunnel |
 | `is_supported` | "Can I stand here?": a solid under the feet, or feet exactly at a ladder's through-hole (`ladder.y+16`, from the head-room convention). The raw ladder bit deliberately doesn't count — that would let you stand on air beside a ladder |
 | `start_jump` / `start_fall` | Enter AIR with `JUMP_VY` or from rest; both arm the apex tracker that feeds the fall-height hook (`last_fall`) for future damage |
+| `update_drones` / `check_drone_hit` | Security drones: 8-byte entity records, patrol between bounds compiled from the map, rotor frame swap every 8 frames (ticker bit 3), AABB contact check → death |
+| `copy_levels_to_bank` / `load_level` | The 128K: all level blobs live in extra-RAM bank 4 (`#C4` over `#4000-#7FFF`, video unaffected); entering a level copies one blob into a writable main-RAM buffer |
+| `next_level` / `enter_level` | Flip-screen climb: y<8 → next level from the bank, player re-enters at the floor keeping X (exit and entry ladders share a column, checked by the generator) |
+| `check_keycards` / `check_doors` | Keycards are tiles (edited out of map RAM, re-blitted on both buffers); doors are SOLID\|DOOR rects + tiles — push with a card to delete both |
+| `draw_char` / `draw_text` (+`_2x`) | 38-glyph 8×8 font, 1 bit/pixel, expanded through `pen_left` at draw time to any pen; glyphs 0–15 are the hex digits, so the HUD prints values directly |
+| `psg_write` / `sfx_*` | AY-3-8912 via the PPI: jump chirp (shrinking tone period), damage noise burst with volume decay, keycard ping. Mixer bit 6 stays 0 — it's the keyboard's port direction! |
 
 All art is authored as ASCII, one character per pixel:
 
@@ -123,6 +129,10 @@ buffer **two** frames ago, not last frame's. The engine keeps one previous
 4. ~~Physics~~ — GROUND/CLIMB/AIR state machine, 8.8 fixed-point gravity and
    jump arcs, landing/head-bump snapping to tile-aligned surfaces, walk-off
    falls, mid-air ladder grabs, fall-height hook for future damage *(done)*
-5. Hazards (steam vents on the 300 Hz tick timer, patrolling drones), keycards
-   and locked hatches, flip-screen progression, level data in the second 64K,
-   AY sound
+5. ~~Gameplay loop~~ — title menu with font renderer, three-level climb with
+   flip-screen transitions, patrolling security drones (animated, lethal),
+   keycards and security doors, keycard/lives HUD, AY sound effects, level
+   data banked in the second 64K, lives/death/respawn/win flow *(done)*
+6. Next: steam vents on the 300 Hz tick, fall damage using `last_fall`,
+   walking animation frames, more shaft levels (the bank holds ~90),
+   an ending sequence at the airlock, AY music

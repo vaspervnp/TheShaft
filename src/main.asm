@@ -84,6 +84,8 @@ SCR_H_LINES     equ 200
 ; ----------------------------------------------------------------------
 TYPE_SOLID      equ 1           ; blocks movement: walls, floors, crates
 TYPE_LADDER     equ 2           ; climbable column
+TYPE_DOOR       equ 4           ; security door: SOLID until opened with
+                                ; a keycard (door rects carry SOLID too)
 
 ; Tile grid: the screen is 20x25 tiles of 8x8 pixels (4 bytes x 8
 ; lines).  Tile rows coincide exactly with the CRTC's 8-line character
@@ -111,6 +113,21 @@ GRAVITY         equ #0030       ; +0.1875 lines/frame^2, pulls down
 JUMP_VY         equ #FD40       ; -2.75 lines/frame at take-off
 MAX_FALL        equ #0400       ; terminal velocity: 4 lines/frame
 INP_VERT_MASK   equ #0C         ; (1<<INP_UP) | (1<<INP_DOWN)
+INP_HORIZ_MASK  equ #03         ; (1<<INP_LEFT) | (1<<INP_RIGHT)
+
+; ----------------------------------------------------------------------
+; Entities and game state
+; ----------------------------------------------------------------------
+MAX_DRONES      equ 4           ; runtime slots (levels use up to 2)
+; drone record layout (8 bytes):
+;  +0 active  +1 x  +2 y  +3 dir (signed, +/-speed)  +4 speed
+;  +5 xmin    +6 xmax     +7 animation ticker
+START_LIVES     equ 3
+
+; Sound effects (see the AY section for what each does)
+SFX_JUMP        equ 1
+SFX_HIT         equ 2
+SFX_PING        equ 3
 
         org #1000
 
@@ -146,18 +163,6 @@ start:
         call set_palette
         call clear_buffers
 
-        ; --- Render the level tilemap into BOTH buffers.  It is static,
-        ; so drawing it once is enough; per frame we only re-blit the
-        ; handful of tiles under the sprite's old position.  A full
-        ; map render is ~7 frames of CPU -- fine here and at screen
-        ; transitions, never inside the frame loop.
-        ld a,SCREEN_B/256
-        ld (draw_page),a
-        call draw_tilemap
-        ld a,SCREEN_A/256
-        ld (draw_page),a
-        call draw_tilemap
-
         ; --- Video state: show buffer A, draw into buffer B.
         ld a,CRTC_R12_A
         ld (shown_r12),a
@@ -170,26 +175,42 @@ start:
 
         ei
 
+        ; --- Park every level in the second 64K, then run the menu.
+        call copy_levels_to_bank
+        jp menu_screen
+
 ; ======================================================================
-; MAIN GAME LOOP
+; THE GAME LOOP -- one iteration per 1/50s frame
 ;
 ;   frame_sync   wait for the frame flyback (VBLANK)   } once per 1/50s
 ;   flip         show the buffer we finished drawing   } beam off-screen
-;   input        scan keyboard + joystick
-;   update       move the world (placeholder for now)
-;   erase+draw   render into the buffer now hidden
+;   then: input, sound, player physics, level-exit check, drones,
+;   collisions, pickups, doors, and finally rendering into the buffer
+;   now hidden.  Rendering starts right after the flip, so we get
+;   nearly the whole frame (19,968 us) before the next flyback.
 ;
-; Rendering happens right after the flip, so we have essentially the
-; whole frame (19,968 us) to draw before the next flyback.
+; Entered with JP (from the menu, a level transition or a respawn);
+; those entry points reset SP, so the loop never leaks stack.
 ; ======================================================================
-main_loop:
+game_loop:
         call frame_sync         ; sleep until the beam flies back to the top
         call flip_buffers       ; hardware page flip -- tear-free by timing
         call read_input         ; keyboard matrix + joystick -> flag bits
-        call update_player      ; walk/climb, filtered through collision
-        call erase_player       ; restore background tiles under old image
-        call draw_player        ; draw the new one
-        jr main_loop
+        call sfx_update         ; feed the AY (one write burst per frame)
+        call update_player      ; walk/climb/jump/fall state machine
+        ld a,(player_y)
+        cp 8                    ; crossed the top edge of the screen?
+        jp c,next_level         ; up one level of the shaft
+        call update_drones      ; patrol movement + animation ticker
+        call check_drone_hit    ; player box vs drone boxes
+        jp c,player_die
+        call check_keycards     ; touching a keycard tile? collect it
+        call check_doors        ; pushing a door with a card? open it
+        call render_entities    ; restore tiles, draw drones + player
+        call draw_hud           ; keycards (left) and lives (right)
+        ld hl,frame_ctr
+        inc (hl)
+        jr game_loop
 
 ; ======================================================================
 ; frame_sync -- synchronise to the frame flyback (VBLANK)
@@ -744,6 +765,8 @@ start_fall:
         ld hl,0                 ; drop from rest
         jr sj_common
 start_jump:
+        ld a,SFX_JUMP           ; rising tone as we leave the ground
+        call sfx_start
         ld hl,JUMP_VY           ; leap: full upward velocity at once
 sj_common:
         ld (player_vy),hl
@@ -1104,21 +1127,7 @@ draw_map_tile:
         cp MAP_H
         ret nc                  ; off the bottom
         push de
-        ; --- fetch the tile index: (current_map) + row*20 + column
-        ld l,e
-        ld h,0
-        add hl,hl               ; row*2
-        add hl,hl               ; row*4
-        ld b,h
-        ld c,l
-        add hl,hl               ; row*8
-        add hl,hl               ; row*16
-        add hl,bc               ; row*20
-        ld c,d
-        ld b,0
-        add hl,bc               ; + column
-        ld bc,(current_map)
-        add hl,bc
+        call map_cell_addr      ; HL -> the map byte for (D,E)
         ld a,(hl)               ; A = tile index
         push af
         ; --- screen address of the cell: x = col*4 bytes, y = row*8
@@ -1136,6 +1145,47 @@ draw_map_tile:
         pop af
         call draw_tile
         pop de
+        ret
+
+; ----------------------------------------------------------------------
+; map_cell_addr -- HL = address of map cell (D=column, E=row) in the
+; CURRENT map: (current_map) + row*20 + column.  Trashes A,BC.
+; The map lives in a main-RAM buffer, so callers may WRITE through the
+; returned pointer -- that is how keycards vanish and doors open.
+; ----------------------------------------------------------------------
+map_cell_addr:
+        ld l,e
+        ld h,0
+        add hl,hl               ; row*2
+        add hl,hl               ; row*4
+        ld b,h
+        ld c,l
+        add hl,hl               ; row*8
+        add hl,hl               ; row*16
+        add hl,bc               ; row*20
+        ld c,d
+        ld b,0
+        add hl,bc               ; + column
+        ld bc,(current_map)
+        add hl,bc
+        ret
+
+; ----------------------------------------------------------------------
+; redraw_cell_both -- re-blit map cell (D,E) into BOTH screen buffers.
+; Used when the map itself changes (keycard taken, door opened): the
+; change must appear in the visible buffer AND the hidden one.
+; ----------------------------------------------------------------------
+redraw_cell_both:
+        ld a,(draw_page)
+        push af
+        ld a,SCREEN_B/256
+        ld (draw_page),a
+        call draw_map_tile      ; preserves D,E
+        ld a,SCREEN_A/256
+        ld (draw_page),a
+        call draw_map_tile
+        pop af
+        ld (draw_page),a
         ret
 
 ; ----------------------------------------------------------------------
@@ -1256,6 +1306,934 @@ fr_same:
         ret
 
 ; ======================================================================
+;
+;   LEVELS AND THE SECOND 64K
+;
+; The 6128's extra 64K is four 16K pages selected by the Gate Array:
+; writing %110001bb to port #7Fxx maps extra page bb over CPU address
+; range #4000-#7FFF (#C4..#C7); #C0 restores the plain 64K.  Two facts
+; make this safe mid-game:
+;   * the video hardware ALWAYS reads the main 64K, so the screen
+;     buffer at #4000 keeps displaying even while the CPU sees bank
+;     RAM at those addresses;
+;   * only code/stack/data OUTSIDE #4000-#7FFF may be touched while a
+;     bank is in -- our code and stack live below #4000 by design.
+; We keep interrupts off during a switch anyway: cheap insurance.
+;
+; All level blobs are copied into bank 4 at boot; entering a level
+; copies one blob back down into level_buffer (main RAM).  That copy
+; is the live, WRITABLE level: keycards vanish and doors open by
+; editing it, and a respawn just fetches a fresh copy from the bank.
+;
+; ======================================================================
+copy_levels_to_bank:
+        di
+        ld bc,#7FC4             ; extra page 0 (bank 4) over #4000
+        out (c),c
+        ld hl,levels_blob
+        ld de,#4000
+        ld bc,LEVELS_BLOB_LEN
+        ldir
+        ld bc,#7FC0             ; straight 64K again
+        out (c),c
+        ei
+        ret
+
+; ----------------------------------------------------------------------
+; load_level -- fetch level A (1..LEVEL_COUNT) from bank 4 into
+; level_buffer, wire the current_* pointers, spawn its drones.
+; ----------------------------------------------------------------------
+load_level:
+        dec a                   ; table entry: word offset, word length
+        add a,a
+        add a,a
+        ld e,a
+        ld d,0
+        ld hl,level_table
+        add hl,de
+        ld e,(hl)
+        inc hl
+        ld d,(hl)
+        inc hl
+        ld c,(hl)
+        inc hl
+        ld b,(hl)               ; BC = length, DE = offset in the bank
+        ld hl,#4000
+        add hl,de               ; HL = source (inside the banked page)
+        ld de,level_buffer
+        di
+        push bc
+        ld bc,#7FC4
+        out (c),c               ; bank in...
+        pop bc
+        ldir                    ; ...copy the level down to main RAM...
+        ld bc,#7FC0
+        out (c),c               ; ...bank out
+        ei
+        ; --- wire the pointers into the fresh copy
+        ld hl,level_buffer+4    ; map follows the 2-word header
+        ld (current_map),hl
+        ld de,level_buffer
+        ld hl,(level_buffer)    ; header +0: rects offset
+        add hl,de
+        ld (current_rects),hl
+        ld hl,(level_buffer+2)  ; header +2: drone list offset
+        add hl,de
+        ; --- unpack drone spawns into the runtime array
+        ld a,(hl)               ; A = spawn count
+        inc hl
+        ld ix,drones
+        ld b,MAX_DRONES
+ll_slot:
+        push bc
+        or a
+        jr z,ll_empty           ; out of spawns: clear remaining slots
+        dec a
+        ld (ix+0),1             ; active
+        ld c,(hl)
+        inc hl
+        ld (ix+1),c             ; x
+        ld c,(hl)
+        inc hl
+        ld (ix+2),c             ; y
+        ld c,(hl)
+        inc hl
+        ld (ix+3),c             ; dir: start moving right (+speed)
+        ld (ix+4),c             ; speed
+        ld c,(hl)
+        inc hl
+        ld (ix+5),c             ; patrol left bound
+        ld c,(hl)
+        inc hl
+        ld (ix+6),c             ; patrol right bound
+        ld (ix+7),0             ; animation ticker
+        jr ll_next
+ll_empty:
+        ld (ix+0),0
+ll_next:
+        pop bc
+        ld de,8
+        add ix,de
+        djnz ll_slot
+        ret
+
+; ----------------------------------------------------------------------
+; enter_level -- place the player at the bottom, reset the sprite
+; bookkeeping, paint the room, drop into the game loop.  Entered by
+; JP; resets SP so no path can leak stack.
+; ----------------------------------------------------------------------
+enter_level:
+        ld sp,#1000
+        ld a,(player_x)
+        ld (respawn_x),a        ; where death brings us back
+        ld a,176                ; emerge from the floor of the new room
+        ld (player_y),a
+        xor a
+        ld (player_yfrac),a
+        ld (last_fall),a
+        ld hl,0
+        ld (player_vy),hl
+        ; arriving on the entry ladder? keep climbing; else stand
+        ld a,(player_x)
+        ld b,a
+        ld c,176
+        call find_ladder
+        jr nc,el_ground
+        ld (player_x),a         ; snap to the rails
+        ld a,ST_CLIMB
+        jr el_state
+el_ground:
+        ld a,ST_GROUND
+el_state:
+        ld (player_state),a
+        ; both buffers' "previous image" slots = the spawn point
+        ld a,(player_x)
+        ld (prev_pos),a
+        ld (prev_pos+2),a
+        ld a,(player_y)
+        ld (prev_pos+1),a
+        ld (prev_pos+3),a
+        ld ix,drones            ; same for every drone slot
+        ld hl,drone_prev
+        ld b,MAX_DRONES
+el_dslot:
+        ld a,(ix+1)
+        ld (hl),a
+        inc hl
+        ld a,(ix+2)
+        ld (hl),a
+        inc hl
+        ld a,(ix+1)
+        ld (hl),a
+        inc hl
+        ld a,(ix+2)
+        ld (hl),a
+        inc hl
+        ld de,8
+        add ix,de
+        djnz el_dslot
+        ; paint the room into BOTH buffers (the visible top-to-bottom
+        ; sweep is our flip-screen transition effect)
+        ld a,SCREEN_B/256
+        ld (draw_page),a
+        call draw_tilemap
+        ld a,SCREEN_A/256
+        ld (draw_page),a
+        call draw_tilemap
+        ld a,(shown_r12)        ; then aim drawing at the hidden buffer
+        cp CRTC_R12_A
+        ld a,SCREEN_B/256
+        jr z,el_aim
+        ld a,SCREEN_A/256
+el_aim:
+        ld (draw_page),a
+        jp game_loop
+
+; ----------------------------------------------------------------------
+; next_level -- the player climbed off the top edge (y < 8)
+; ----------------------------------------------------------------------
+next_level:
+        ld a,(current_level)
+        inc a
+        cp LEVEL_COUNT+1
+        jp nc,game_win          ; above the last level: the airlock
+        ld (current_level),a
+        call load_level
+        jp enter_level          ; X carries over; Y resets to the floor
+
+game_win:                       ; reached the top of the shaft (for now:
+        ld b,50                 ; a green flash, then back to the title)
+gw_loop:
+        push bc
+        call frame_sync
+        ld bc,GA_PORT+#10
+        out (c),c
+        ld a,#52                ; bright green border
+        out (c),a
+        pop bc
+        djnz gw_loop
+        ld bc,GA_PORT+#10
+        out (c),c
+        ld a,#54
+        out (c),a
+        jp menu_screen
+
+; ----------------------------------------------------------------------
+; player_die -- drone contact.  Crash noise, red flash, respawn from a
+; fresh copy of the level -- or back to the menu when the lives run out.
+; ----------------------------------------------------------------------
+player_die:
+        ld a,SFX_HIT
+        call sfx_start
+        ld b,35                 ; freeze ~0.7s
+pd_loop:
+        push bc
+        call frame_sync
+        ld bc,GA_PORT+#10
+        out (c),c
+        ld a,#4C                ; bright red border
+        out (c),a
+        call sfx_update         ; let the noise burst play out
+        pop bc
+        djnz pd_loop
+        ld bc,GA_PORT+#10
+        out (c),c
+        ld a,#54                ; border back to black
+        out (c),a
+        ld hl,game_lives
+        dec (hl)
+        jp z,menu_screen        ; out of lives
+        ld a,(current_level)
+        call load_level         ; fresh map (doors shut, cards back)
+        ld a,(respawn_x)
+        ld (player_x),a
+        jp enter_level
+
+; ======================================================================
+;
+;   SECURITY DRONES -- Prompt 5
+;
+; Each drone is an 8-byte record (see the constants block): position,
+; a signed direction that doubles as the speed, patrol bounds and an
+; animation ticker.  They bounce between xmin and xmax forever, and
+; their rotor blades alternate between two sprite frames every 8
+; frames (bit 3 of the ticker).
+;
+; ======================================================================
+update_drones:
+        ld ix,drones
+        ld b,MAX_DRONES
+ud_loop:
+        ld a,(ix+0)
+        or a
+        jr z,ud_next
+        inc (ix+7)              ; animation ticker (bit 3 picks the frame)
+        ld a,(ix+1)
+        add a,(ix+3)            ; x += dir  (dir is +/-speed)
+        ld (ix+1),a
+        cp (ix+5)               ; reached the left end of the patrol?
+        jr c,ud_turn_r
+        jr z,ud_turn_r
+        cp (ix+6)               ; the right end?
+        jr nc,ud_turn_l
+        jr ud_next
+ud_turn_r:
+        ld a,(ix+5)
+        ld (ix+1),a             ; clamp to the bound...
+        ld a,(ix+4)
+        ld (ix+3),a             ; ...and head right (+speed)
+        jr ud_next
+ud_turn_l:
+        ld a,(ix+6)
+        ld (ix+1),a
+        xor a
+        sub (ix+4)
+        ld (ix+3),a             ; head left (-speed)
+ud_next:
+        ld de,8
+        add ix,de
+        djnz ud_loop
+        ret
+
+; ----------------------------------------------------------------------
+; check_drone_hit -- player box vs every active drone box.
+; Both boxes are 4 bytes x 16 lines, so AABB overlap reduces to
+; |dx| < 4 AND |dy| < 16.  Carry set = contact (the caller jumps to
+; player_die -- keeping the control flow in the game loop).
+; ----------------------------------------------------------------------
+check_drone_hit:
+        ld ix,drones
+        ld b,MAX_DRONES
+cdh_loop:
+        ld a,(ix+0)
+        or a
+        jr z,cdh_next
+        ld a,(player_x)
+        sub (ix+1)
+        jr nc,cdh_dx
+        neg                     ; |player_x - drone_x|
+cdh_dx:
+        cp SPR_W_BYTES
+        jr nc,cdh_next          ; too far apart horizontally
+        ld a,(player_y)
+        sub (ix+2)
+        jr nc,cdh_dy
+        neg
+cdh_dy:
+        cp SPR_H_LINES
+        jr nc,cdh_next
+        scf                     ; boxes intersect: contact
+        ret
+cdh_next:
+        ld de,8
+        add ix,de
+        djnz cdh_loop
+        or a                    ; carry clear: safe
+        ret
+
+; ----------------------------------------------------------------------
+; render_entities -- the per-frame draw pass, double-buffer aware:
+; restore the background under every OLD image in this buffer, then
+; draw everything anew (drones first, player on top).
+; ----------------------------------------------------------------------
+render_entities:
+        call erase_player
+        ld ix,drones
+        ld iy,drone_prev
+        ld b,MAX_DRONES
+re_erase:
+        ld a,(ix+0)
+        or a
+        jr z,re_e_next
+        push bc
+        ld a,(buf_index)        ; this buffer's slot: +0/+2 per drone
+        add a,a
+        ld e,a
+        ld d,0
+        push iy
+        pop hl
+        add hl,de
+        ld b,(hl)
+        inc hl
+        ld c,(hl)
+        call restore_tiles      ; (leaves IX/IY alone)
+        pop bc
+re_e_next:
+        ld de,8
+        add ix,de
+        ld de,4
+        add iy,de
+        djnz re_erase
+        ld ix,drones
+        ld iy,drone_prev
+        ld b,MAX_DRONES
+re_draw:
+        ld a,(ix+0)
+        or a
+        jr z,re_d_next
+        push bc
+        ld a,(buf_index)
+        add a,a
+        ld e,a
+        ld d,0
+        push iy
+        pop hl
+        add hl,de
+        ld a,(ix+1)
+        ld (hl),a               ; remember where we draw (for the
+        ld b,a                  ;  restore two frames from now)
+        inc hl
+        ld a,(ix+2)
+        ld (hl),a
+        ld c,a
+        ; the animation ticker's bit 3 swaps frames every 8 frames
+        ld de,spr_drone_a
+        ld a,(ix+7)
+        and 8
+        jr z,re_frame
+        ld de,spr_drone_b
+re_frame:
+        call draw_sprite_8x16
+        pop bc
+re_d_next:
+        ld de,8
+        add ix,de
+        ld de,4
+        add iy,de
+        djnz re_draw
+        jp draw_player          ; player last: always in front
+
+; ======================================================================
+;
+;   KEYCARDS AND SECURITY DOORS -- Prompt 7
+;
+; Keycards are TILES: touch one and it is edited out of the map RAM,
+; re-blitted away on both screens, and counted.  Doors are RECTS (so
+; the ordinary collision keeps blocking) plus tiles (so they show):
+; pushing into one with a card deletes the rect and clears the tiles.
+;
+; ======================================================================
+check_keycards:
+        ld a,(player_x)         ; scan the same <=2x3 cell neighbourhood
+        srl a                   ; the sprite can overlap
+        srl a
+        ld d,a
+        ld a,(player_y)
+        srl a
+        srl a
+        srl a
+        ld e,a
+        ld b,2
+ck_col:
+        ld c,3
+ck_row:
+        push bc
+        call ck_cell
+        pop bc
+        inc e
+        dec c
+        jr nz,ck_row
+        dec e                   ; row back to the top of the window
+        dec e
+        dec e
+        inc d
+        djnz ck_col
+        ret
+ck_cell:                        ; if cell (D,E) is a keycard, take it
+        ld a,d
+        cp MAP_W
+        ret nc
+        ld a,e
+        cp MAP_H
+        ret nc
+        call map_cell_addr      ; (preserves D,E)
+        ld a,(hl)
+        cp TILE_KEYCARD
+        ret nz
+        ld (hl),TILE_EMPTY      ; lift it out of the map RAM...
+        call redraw_cell_both   ; ...and off both screen buffers
+        ld hl,keycards_held
+        inc (hl)
+        ld a,SFX_PING
+        jp sfx_start            ; (preserves D,E for the loop)
+
+; ----------------------------------------------------------------------
+; check_doors -- pushing sideways into a DOOR rect while holding a
+; card?  Then consume the card, kill the rect (type 0 matches nothing
+; ever again) and clear the door's tiles from map + both screens.
+; The walk itself goes through next frame -- the door is simply gone.
+; ----------------------------------------------------------------------
+check_doors:
+        ld a,(keycards_held)
+        or a
+        ret z                   ; no card: the door stays shut
+        ld a,(input_held)
+        and INP_HORIZ_MASK
+        ret z                   ; not pushing sideways
+        ld a,(input_held)
+        bit INP_LEFT,a
+        ld a,(player_x)
+        jr z,cdo_right
+        or a
+        ret z
+        dec a                   ; probe one byte into the push
+        jr cdo_probe
+cdo_right:
+        cp SCR_W_BYTES-SPR_W_BYTES
+        ret nc
+        inc a
+cdo_probe:
+        ld b,a
+        ld a,(player_y)
+        ld c,a
+        ld d,SPR_W_BYTES
+        ld e,SPR_H_LINES
+        push bc
+        call probe_level
+        pop bc
+        and TYPE_DOOR
+        ret z                   ; nothing door-like in the way
+        ld ix,(current_rects)   ; find WHICH door the box touches
+cdo_find:
+        ld a,(ix+0)
+        cp #FF
+        ret z
+        ld a,(ix+4)
+        and TYPE_DOOR
+        jr z,cdo_skip
+        call box_overlap        ; B,C,D,E probe box is still intact
+        jr c,cdo_open
+cdo_skip:
+        repeat 5
+        inc ix
+        rend
+        jr cdo_find
+cdo_open:
+        ld hl,keycards_held
+        dec (hl)
+        ld (ix+4),0             ; the rect will never match again
+        ld a,SFX_PING
+        call sfx_start
+        ld a,(ix+0)             ; the door is 1 column x H rows of
+        srl a                   ; tile-aligned cells: clear them all
+        srl a
+        ld d,a
+        ld a,(ix+2)
+        srl a
+        srl a
+        srl a
+        ld e,a
+        ld a,(ix+3)
+        srl a
+        srl a
+        srl a
+        ld b,a                  ; B = rows of door tile
+cdo_clear:
+        push bc
+        call map_cell_addr
+        ld (hl),TILE_EMPTY
+        call redraw_cell_both
+        pop bc
+        inc e
+        djnz cdo_clear
+        ret
+
+; ======================================================================
+;
+;   TEXT, FONT AND HUD -- Prompt 7 (and the menu)
+;
+; The font is 38 8x8 glyphs stored as 1-bit bitmaps (bit 7 = leftmost
+; pixel), expanded to Mode 0 at draw time through pen_left, so any
+; text can be any pen.  Glyphs 0..15 are the hex digits, which makes
+; the HUD a single draw_char of the raw value.
+;
+; ======================================================================
+; draw_char -- A=glyph, B=x byte, C=y line, E=pen.
+; y MUST sit on a character row (multiple of 8): every glyph line is
+; then a constant +#800 apart, like the tiles.
+draw_char:
+        push bc
+        ld l,a                  ; IX = font + glyph*8
+        ld h,0
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        ld bc,font_8x8
+        add hl,bc
+        push hl
+        pop ix
+        ld d,0                  ; D/E = this pen's left/right pixel bits
+        ld hl,pen_left
+        add hl,de
+        ld a,(hl)
+        ld d,a
+        srl a
+        ld e,a
+        pop bc
+        push de
+        call screen_addr        ; HL = destination (eats DE)
+        pop de
+        ld b,8
+dchr_row:
+        push hl
+        ld c,(ix+0)             ; glyph row, bit 7 = leftmost pixel
+        inc ix
+        repeat 4                ; 8 pixels -> 4 screen bytes
+        xor a
+        rlc c                   ; left pixel -> carry
+        jr nc,$+3               ; (hop over the 1-byte OR)
+        or d
+        rlc c                   ; right pixel -> carry
+        jr nc,$+3
+        or e
+        ld (hl),a
+        inc hl
+        rend
+        pop hl
+        ld a,h                  ; +#800: rows stay inside the char row
+        add a,8
+        ld h,a
+        djnz dchr_row
+        ret
+
+; draw_char_2x -- as draw_char but doubled: 16x16 pixels, any y.
+; Each glyph pixel becomes a full byte (both Mode 0 pixels) and each
+; glyph row paints two scanlines, stepping with the wrap-safe walk.
+draw_char_2x:
+        push bc
+        ld l,a
+        ld h,0
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        ld bc,font_8x8
+        add hl,bc
+        push hl
+        pop ix
+        ld d,0
+        ld hl,pen_left
+        add hl,de
+        ld a,(hl)
+        ld d,a
+        srl a
+        ld e,a
+        pop bc
+        push de
+        call screen_addr
+        pop de
+        ld b,8                  ; 8 glyph rows...
+d2x_row:
+        push bc
+        ld b,2                  ; ...two scanlines each
+d2x_half:
+        push hl
+        ld c,(ix+0)
+        repeat 8                ; every glyph pixel -> one full byte
+        xor a
+        rlc c
+        jr nc,$+4               ; (hop over OR d + OR e)
+        or d
+        or e
+        ld (hl),a
+        inc hl
+        rend
+        pop hl
+        ld a,h                  ; generic step: 16 lines cross a row
+        add a,8
+        ld h,a
+        and #38
+        jr nz,d2x_ok
+        ld a,l
+        add a,#50
+        ld l,a
+        ld a,h
+        adc a,#C0
+        ld h,a
+d2x_ok:
+        djnz d2x_half
+        inc ix
+        pop bc
+        djnz d2x_row
+        ret
+
+; ----------------------------------------------------------------------
+; draw_text / draw_text_2x -- HL = 0-terminated ASCII, B=x, C=y, E=pen
+; ----------------------------------------------------------------------
+draw_text:
+        ld a,(hl)
+        or a
+        ret z
+        inc hl
+        push hl
+        push bc
+        push de
+        call ascii_to_glyph
+        call draw_char
+        pop de
+        pop bc
+        pop hl
+        ld a,b
+        add a,4                 ; one char = 4 Mode 0 bytes
+        ld b,a
+        jr draw_text
+draw_text_2x:
+        ld a,(hl)
+        or a
+        ret z
+        inc hl
+        push hl
+        push bc
+        push de
+        call ascii_to_glyph
+        call draw_char_2x
+        pop de
+        pop bc
+        pop hl
+        ld a,b
+        add a,8
+        ld b,a
+        jr draw_text_2x
+
+ascii_to_glyph:                 ; ASCII -> font index (0-9 A-Z '-' ' ')
+        cp ' '
+        jr nz,atg1
+        ld a,37
+        ret
+atg1:
+        cp '-'
+        jr nz,atg2
+        ld a,36
+        ret
+atg2:
+        cp 'A'
+        jr c,atg3
+        sub 'A'-10              ; letters follow the ten digits
+        ret
+atg3:
+        sub '0'
+        ret
+
+; ----------------------------------------------------------------------
+; draw_hud -- keycards held (left, green) and lives (right, red).
+; Drawn into the hidden buffer every frame: two glyphs, trivial cost,
+; and both buffers stay correct without any dirty-tracking.
+; ----------------------------------------------------------------------
+draw_hud:
+        ld a,(keycards_held)
+        and #0F                 ; one hex digit (glyph = value)
+        ld b,0
+        ld c,0
+        ld e,9                  ; keycard green
+        call draw_char
+        ld a,(game_lives)
+        and #0F
+        ld b,SCR_W_BYTES-4
+        ld c,0
+        ld e,5                  ; alarm red
+        jp draw_char
+
+; ======================================================================
+;
+;   TITLE MENU
+;
+; ======================================================================
+menu_screen:
+        ld sp,#1000             ; fresh stack (see game_loop note)
+        xor a
+        ld (sfx_timer),a
+        call sfx_silence
+        ld hl,menu_map          ; backdrop straight from main RAM
+        ld (current_map),hl
+        ld a,SCREEN_B/256
+        ld (draw_page),a
+        call draw_menu_page
+        ld a,SCREEN_A/256
+        ld (draw_page),a
+        call draw_menu_page
+ms_loop:
+        call frame_sync
+        call flip_buffers
+        call read_input
+        ld hl,frame_ctr
+        inc (hl)
+        ld a,(frame_ctr)        ; blink the prompt every 16 frames
+        and 16
+        ld e,6                  ; orange on...
+        jr nz,ms_blink
+        ld e,0                  ; ...black off (opaque glyphs erase)
+ms_blink:
+        ld hl,txt_press
+        ld b,2
+        ld c,120
+        call draw_text
+        ld a,(input_new)
+        bit INP_FIRE,a
+        jr z,ms_loop
+        ; --- new game
+        ld a,START_LIVES
+        ld (game_lives),a
+        xor a
+        ld (keycards_held),a
+        ld a,1
+        ld (current_level),a
+        ld a,38                 ; the mechanic's post, mid-deck
+        ld (player_x),a
+        ld a,1
+        call load_level
+        jp enter_level
+
+draw_menu_page:                 ; backdrop + text + diorama, one buffer
+        call draw_tilemap
+        ld hl,txt_title
+        ld b,4
+        ld c,32
+        ld e,7                  ; bright yellow, double size
+        call draw_text_2x
+        ld hl,txt_tag
+        ld b,4
+        ld c,64
+        ld e,10                 ; bright cyan
+        call draw_text
+        ld hl,txt_credit
+        ld b,6                  ; bottom middle
+        ld c,184
+        ld e,2                  ; steel grey
+        call draw_text
+        ld b,36                 ; the mechanic, on the crate stack
+        ld c,128
+        ld de,spr_mechanic
+        call draw_sprite_8x16
+        ld b,56                 ; a drone hovering watchfully
+        ld c,88
+        ld de,spr_drone_a
+        jp draw_sprite_8x16
+
+; ======================================================================
+;
+;   SOUND EFFECTS -- Prompt 8: driving the AY-3-8912
+;
+; The AY sits behind the PPI: its data bus is PPI port A (#F4xx) and
+; its BDIR/BC1 control lines are PPI port C bits 7/6 (#F6xx).  One
+; register write is a two-step dance: put the register number on port
+; A and pulse BDIR+BC1 (%11 = "latch address"), then put the value on
+; port A and pulse BDIR alone (%10 = "write data").
+;
+; Registers used here:
+;   R0/R1  channel A tone period (12 bits; 1MHz/16/period = Hz --
+;          SMALLER period = HIGHER pitch)
+;   R6     noise period (5 bits, larger = deeper rumble)
+;   R7     mixer: bits 0-2 enable tone A/B/C, bits 3-5 noise per
+;          channel -- all ACTIVE LOW.  Bit 6 is the I/O port
+;          direction and MUST stay 0 or the keyboard stops working!
+;   R8     channel A volume (0-15)
+;
+; One sound at a time on channel A; a new trigger simply replaces the
+; old.  sfx_update writes a fresh register burst every frame:
+;   JUMP : square tone whose period shrinks each frame - rising chirp
+;   HIT  : pure noise burst, volume ramping 12->0 - a metallic crunch
+;   PING : short high tone, quick fade - the keycard chime
+; ======================================================================
+psg_write:                      ; A = AY register, E = value
+        di
+        ld b,#F4
+        out (c),a               ; register number -> AY data bus
+        ld bc,#F6C0
+        out (c),c               ; BDIR=1 BC1=1: latch the address
+        ld bc,#F600
+        out (c),c               ; bus idle
+        ld b,#F4
+        out (c),e               ; value -> data bus
+        ld bc,#F680
+        out (c),c               ; BDIR=1 BC1=0: write the register
+        ld bc,#F600
+        out (c),c
+        ei
+        ret
+
+sfx_start:                      ; A = SFX_* (1-based); sets the timer
+        ld (sfx_type),a         ; (preserves DE -- callers rely on it)
+        ld hl,sfx_len_tab-1
+        add a,l
+        ld l,a
+        jr nc,$+3
+        inc h
+        ld a,(hl)
+        ld (sfx_timer),a
+        ret
+
+sfx_update:                     ; call once per frame
+        ld a,(sfx_timer)
+        or a
+        ret z                   ; silent, and already shut down
+        dec a
+        ld (sfx_timer),a
+        jr z,sfx_silence        ; just expired: close the channel
+        ld a,(sfx_type)
+        dec a
+        jr z,sfx_upd_jump
+        dec a
+        jr z,sfx_upd_hit
+        ; ---- PING: high steady tone (period 40 ~= 1.5kHz), fast fade
+        xor a
+        ld e,40
+        call psg_write          ; R0 = period low
+        ld a,1
+        ld e,0
+        call psg_write          ; R1 = period high
+        ld a,7
+        ld e,%00111110          ; mixer: tone A only (bit 6 low!)
+        call psg_write
+        ld a,(sfx_timer)
+        add a,6                 ; volume 13..7 as the timer runs out
+        ld e,a
+        ld a,8
+        jp psg_write
+sfx_upd_jump:
+        ; ---- JUMP: period 60+timer*16 -- shrinks every frame, so the
+        ; pitch RISES as we leave the ground (timer 12 -> 252 .. 76)
+        ld a,(sfx_timer)
+        add a,a
+        add a,a
+        add a,a
+        add a,a
+        add a,60
+        ld e,a
+        xor a
+        call psg_write          ; R0
+        ld a,1
+        ld e,0
+        call psg_write          ; R1
+        ld a,7
+        ld e,%00111110          ; tone A only
+        call psg_write
+        ld a,8
+        ld e,12                 ; steady volume; the sweep does the work
+        jp psg_write
+sfx_upd_hit:
+        ; ---- HIT: white noise, volume halving with the timer (12->0)
+        ld a,6
+        ld e,14                 ; deep noise period: metallic rumble
+        call psg_write
+        ld a,7
+        ld e,%00110111          ; noise on channel A, tones all off
+        call psg_write
+        ld a,(sfx_timer)
+        srl a
+        ld e,a
+        ld a,8
+        jp psg_write
+sfx_silence:
+        ld a,8
+        ld e,0
+        call psg_write          ; volume hard off
+        ld a,7
+        ld e,%00111111          ; mixer: everything off (bit 6 = 0)
+        jp psg_write
+
+sfx_len_tab:
+        defb 12,24,8            ; frames: JUMP, HIT, PING
+
+; ======================================================================
 ; set_palette -- program all 16 inks + border via the Gate Array
 ;
 ; GA commands on port #7Fxx: %00nnnnnn selects pen n (or #10 = border),
@@ -1365,14 +2343,59 @@ spr_mechanic:   ; 8x16 px = 4 bytes x 16 lines, (mask,data) interleaved
         defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
 
 ; ----------------------------------------------------------------------
-; Level data -- GENERATED from ASCII art by tools/level_gen.py.
-; Provides: tileset (8x8 tile pixels), tilemap01 (20x25 indices) and
-; level_rects (collision geometry compiled from the same map, so the
-; picture and the physics can never disagree).
-; Authoring rules (head-room rows above platforms, even-y surfaces,
-; ladder gap conventions) are documented in the generator.
+; Security drone, two frames -- the rotor spins and the eye scans.
+; Generated by tools/sprite_gen.py.  Pens: 2 rotor, 10 shell, 5 eye.
 ; ----------------------------------------------------------------------
-        include "level01.asm"
+spr_drone_a:
+        defb #55,#08, #AA,#04, #55,#08, #AA,#04   ; 2..22..2
+        defb #AA,#04, #00,#0C, #00,#0C, #55,#08   ; .222222.
+        defb #FF,#00, #AA,#04, #55,#08, #FF,#00   ; ...22...
+        defb #FF,#00, #00,#0F, #00,#0F, #FF,#00   ; ..aaaa..
+        defb #AA,#05, #00,#0F, #00,#0F, #55,#0A   ; .aaaaaa.
+        defb #AA,#05, #00,#F0, #00,#F0, #55,#0A   ; .a5555a.
+        defb #AA,#05, #00,#0F, #00,#0F, #55,#0A   ; .aaaaaa.
+        defb #AA,#05, #00,#0F, #00,#0F, #55,#0A   ; .aaaaaa.
+        defb #FF,#00, #00,#0F, #00,#0F, #FF,#00   ; ..aaaa..
+        defb #FF,#00, #AA,#05, #55,#0A, #FF,#00   ; ...aa...
+        defb #FF,#00, #55,#08, #AA,#04, #FF,#00   ; ..2..2..
+        defb #AA,#04, #FF,#00, #FF,#00, #55,#08   ; .2....2.
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+spr_drone_b:
+        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
+        defb #00,#0C, #00,#0C, #00,#0C, #00,#0C   ; 22222222
+        defb #FF,#00, #AA,#04, #55,#08, #FF,#00   ; ...22...
+        defb #FF,#00, #00,#0F, #00,#0F, #FF,#00   ; ..aaaa..
+        defb #AA,#05, #00,#0F, #00,#0F, #55,#0A   ; .aaaaaa.
+        defb #AA,#05, #00,#E0, #00,#D0, #55,#0A   ; .a5115a.
+        defb #AA,#05, #00,#0F, #00,#0F, #55,#0A   ; .aaaaaa.
+        defb #AA,#05, #00,#0F, #00,#0F, #55,#0A   ; .aaaaaa.
+        defb #FF,#00, #00,#0F, #00,#0F, #FF,#00   ; ..aaaa..
+        defb #FF,#00, #AA,#05, #55,#0A, #FF,#00   ; ...aa...
+        defb #FF,#00, #55,#08, #AA,#04, #FF,#00   ; ..2..2..
+        defb #AA,#04, #FF,#00, #FF,#00, #55,#08   ; .2....2.
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+
+; ----------------------------------------------------------------------
+; Menu / UI strings (ASCII; ascii_to_glyph maps them to the font)
+; ----------------------------------------------------------------------
+txt_title:      defb "THE SHAFT",0
+txt_tag:        defb "THE TRUTH IS ABOVE",0
+txt_press:      defb "PRESS FIRE TO START",0
+txt_credit:     defb "REVIVE8BIT - 2026",0
+
+; ----------------------------------------------------------------------
+; Generated data -- tools/level_gen.py emits src/levels.asm:
+; tileset, font, pen table, menu backdrop, all level blobs (tilemaps +
+; collision rects + drone spawns compiled from the same ASCII source),
+; and the bank offset table.
+; ----------------------------------------------------------------------
+        include "levels.asm"
 
 ; ----------------------------------------------------------------------
 ; line_offsets -- offset of each scanline's first byte within a 16K
@@ -1402,11 +2425,11 @@ shown_r12:      defb 0          ; CRTC R12 value currently displayed
 draw_page:      defb 0          ; high byte of the DRAW buffer (#40/#C0)
 buf_index:      defb 0          ; 0/1 - selects the prev_pos slot below
 
-; Current-screen pointers: the flip-screen loader will re-aim these
-; when the player moves between levels of the shaft.
-current_map:     defw tilemap01 ; 20x25 tile indices being displayed
+; Current-screen pointers: menu_screen and load_level re-aim these
+; when the displayed room changes.
+current_map:     defw menu_map  ; 20x25 tile indices being displayed
 current_tileset: defw tileset   ; pixel data the indices refer to
-current_rects:   defw level_rects ; collision geometry of this screen
+current_rects:   defw level_buffer ; collision geometry of this screen
 
 player_x:       defb 38         ; byte column (0..76), start mid-deck
 player_yfrac:   defb 0          ; fractional Y, 1/256 line.  MUST sit
@@ -1418,6 +2441,22 @@ player_vy:      defw 0          ; vertical velocity, signed 8.8
 fall_start:     defb 176        ; highest y reached in the current arc
 last_fall:      defb 0          ; lines dropped on the last landing
                                 ; (hook for fall damage / landing thud)
+
+frame_ctr:      defb 0          ; ++ every game/menu frame (blink, anim)
+game_lives:     defb START_LIVES
+keycards_held:  defb 0
+current_level:  defb 1
+respawn_x:      defb 38         ; where this level was entered
+sfx_type:       defb 0          ; active sound effect (0 = none)
+sfx_timer:      defb 0          ; frames left on it
+
+drones:         defs MAX_DRONES*8,0   ; runtime entity records
+drone_prev:     defs MAX_DRONES*4,0   ; per drone: (x,y) x 2 buffers
+
+; The live copy of the current level, fetched from bank 4.  Map +
+; rects + drone spawns; WRITABLE (keycards/doors edit it) and big
+; enough for the largest level with room to grow.
+level_buffer:   defs 768,0
 prev_pos:       defb 38,176     ; where the player was drawn in buffer B
                 defb 38,176     ; ... and in buffer A
 key_matrix:     defs 10,#FF     ; raw matrix rows (active low, #FF = idle)
