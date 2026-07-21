@@ -129,6 +129,15 @@ TILES = [
     ("leak_white", EMPTY, [              # same pipe, harmless drip
         "33333333", "44444443", "33333333", "...11...",
         "....1...", "........", "........", "........"]),
+    ("switch_off", EMPTY, [              # wall switch, lever down (red)
+        "..2222..", ".211112.", ".215512.", ".215512.",
+        ".211112.", "..2222..", "...22...", "...22..."]),
+    ("switch_on", EMPTY, [               # pressed: lever up (green)
+        "..2222..", ".211112.", ".219912.", ".219912.",
+        ".211112.", "..2222..", "...22...", "...22..."]),
+    ("vault", EMPTY, [                   # sealed key vault, grounded
+        "11111111", "12222221", "12266221", "12266221",
+        "12222221", "12222221", "12222221", "11111111"]),
 ]
 CHARMAP = {'.': "empty", 'W': "wall", '#': "slab", 'F': "floor",
            'L': "ladder", 'C': "crate", 'p': "pipe", 'h': "hazard",
@@ -140,6 +149,7 @@ CHARMAP = {'.': "empty", 'W': "wall", '#': "slab", 'F': "floor",
            'm': "lamp", 'g': "grate", 'b': "bush", 'n': "panel",
            'E': "elevator", 'M': "medkit",
            'l': "leak_red", 'w': "leak_white",
+           '!': "switch_off", '$': "vault",
            'R': "empty", 'G': "empty", 'T': "empty"}   # enemy markers
 
 # ----------------------------------------------------------------------
@@ -346,7 +356,8 @@ PLAT_ROWS = (18, 12, 6)                 # platform slab rows, bottom-up
 
 
 def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
-              cross_colors=(), spare_colors=(), local_colors=()):
+              cross_colors=(), spare_colors=(), local_colors=(),
+              switch_ids=(), vault_ids=()):
     """Build one screen around the fixed climb skeleton.  Returns
     (map lines, plan); raises AssertionError when a layout constraint
     cannot be met (the caller simply retries with fresh randomness)."""
@@ -401,7 +412,9 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
         pairs.append({"color": col, "dplat": d, "dcol": dcol,
                       "cross": i < len(cross_colors)})
 
-    def place_key(col, kplat):
+    def place_thing(ch, kplat, drop=0):
+        # drop=1 puts the thing at FEET level, resting on the ground
+        # (vaults); drop=0 is card/switch height
         for _ in range(40):
             if kplat < 0:
                 krow, below_row = 22, 24
@@ -416,19 +429,37 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
                 continue
             if any(abs(c - b) < 2 for b in bad):
                 continue
-            grid[krow][c] = KEY_CH[col]
+            grid[krow + drop][c] = ch
             return kplat, c
-        raise AssertionError("no key spot")
+        raise AssertionError("no spot")
 
-    keys_at = []                        # every key on this level
+    # a quarter of all keys hide in VAULTS: the vault sits where the
+    # key would, but only opens once its switch -- sown on an EARLIER
+    # level -- has been pressed.  vault_ids arrived pre-matched to
+    # switches already on record.
+    vq = list(vault_ids)
+    keys_at, vaults, switches = [], [], []
+
+    def place_key(col, kplat):
+        if vq and rng.random() < 0.65:
+            vid = vq.pop(0)
+            p, c = place_thing('$', kplat, drop=1)
+            vaults.append((vid, p, c, col))
+        else:
+            p, c = place_thing(KEY_CH[col], kplat)
+            keys_at.append((p, c))
+
     for pp in pairs:
         if pp["cross"]:
             continue
         d = pp["dplat"]
         kplat = -1 if (zone == 2 or d == 0) else rng.randrange(-1, d)
-        keys_at.append(place_key(pp["color"], kplat))
+        place_key(pp["color"], kplat)
     for col in spare_colors:            # sown for doors on levels above
-        keys_at.append(place_key(col, rng.randrange(-1, 3)))
+        place_key(col, rng.randrange(-1, 3))
+    for sid in switch_ids:              # switches for vaults above
+        p, c = place_thing('!', rng.randrange(-1, 3))
+        switches.append((sid, p, c))
 
     def plat_avoid(p):
         avoid = [ladders[p], ladders[p + 1]]
@@ -436,6 +467,12 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
             if pp["dplat"] == p:
                 avoid.append(pp["dcol"])
         for kp, kc in keys_at:
+            if kp == p:
+                avoid.append(kc)
+        for _v, kp, kc, _c in vaults:
+            if kp == p:
+                avoid.append(kc)
+        for _s, kp, kc in switches:
             if kp == p:
                 avoid.append(kc)
         return avoid
@@ -548,7 +585,7 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
 
     lines = [''.join(r) for r in grid]
     plan = {"ladders": ladders, "pairs": pairs, "gaps": gaps,
-            "keys_at": keys_at}
+            "keys_at": keys_at, "vaults": vaults, "switches": switches}
     return lines, plan
 
 
@@ -570,7 +607,7 @@ def leaks(level, rng):
 # ======================================================================
 # Built-in playthrough verification (mirrors the engine rules)
 # ======================================================================
-def verify(level, plan, entry_col, name, inventory=None):
+def verify(level, plan, entry_col, name, inventory=None, pressed=None):
     rects = []
     for c0, c1, r0, r1, t in (solid_rects(level) + column_runs(level, DOOR)
                               + column_runs(level, LADDER)):
@@ -578,6 +615,17 @@ def verify(level, plan, entry_col, name, inventory=None):
         rects.append([c0*4, (c1-c0+1)*4, r0*8, (r1-r0+1)*8, tt])
     grid = [list(r) for r in level]
     keys = inventory if inventory is not None else [0] * 5
+    if pressed is None:
+        pressed = set()
+    vault_by_cell = {(p, c): (vid, col)
+                     for vid, p, c, col in plan.get("vaults", [])}
+    switch_by_cell = {(p, c): sid for sid, p, c in plan.get("switches", [])}
+
+    def plat_of(yy):
+        for p in range(3):
+            if yy == PLAT_ROWS[p] * 8 - 16:
+                return p
+        return -1
 
     def probe(bx, by, bw=4, bh=16):
         f = 0
@@ -646,23 +694,38 @@ def verify(level, plan, entry_col, name, inventory=None):
             for dc in (0, 1):
                 for dr in (0, 1, 2):
                     cc, rr = x // 4 + dc, y // 8 + dr
-                    if cc < MAP_W and rr < MAP_H and grid[rr][cc] in 'KJYUO':
-                        keys["KJYUO".index(grid[rr][cc])] += 1
-                        grid[rr][cc] = '.'
+                    if cc < MAP_W and rr < MAP_H:
+                        ch = grid[rr][cc]
+                        if ch in 'KJYUO':
+                            keys["KJYUO".index(ch)] += 1
+                            grid[rr][cc] = '.'
+                        elif ch == '!':
+                            sid = switch_by_cell.get((plat_of(y), cc))
+                            if sid is not None:
+                                pressed.add(sid)
+                                grid[rr][cc] = '.'
+                        elif ch == '$':
+                            v = vault_by_cell.get((plat_of(y), cc))
+                            if v is not None and v[0] in pressed:
+                                keys[v[1]] += 1
+                                grid[rr][cc] = '.'
         return False
 
-    # floor first: pocket every key stashed down here, then remount
-    for kp, kc in plan["keys_at"]:
+    touch = list(plan["keys_at"]) \
+            + [(p, c) for _s, p, c in plan.get("switches", [])] \
+            + [(p, c) for _v, p, c, _col in plan.get("vaults", [])]
+    # floor first: press and pocket everything stashed down here
+    for kp, kc in touch:
         if kp < 0:
-            assert walk_to(kc * 4), f"{name}: floor key unreachable"
+            assert walk_to(kc * 4), f"{name}: floor stop unreachable"
     assert walk_to(plan["ladders"][0] * 4), f"{name}: can't get back to the ladder"
-    # then platform by platform: collect the keys, cross the doors
+    # then platform by platform: touch everything, cross the doors
     for p in range(3):
         climb_stretch()
         assert y == PLAT_ROWS[p] * 8 - 16, f"{name}: stuck below platform {p}"
-        for kp, kc in plan["keys_at"]:
+        for kp, kc in touch:
             if kp == p:
-                assert walk_to(kc * 4), f"{name}: key unreachable on p{p}"
+                assert walk_to(kc * 4), f"{name}: stop unreachable on p{p}"
         assert walk_to(plan["ladders"][p + 1] * 4), \
             f"{name}: can't cross platform {p}"
     climb_stretch()
@@ -673,7 +736,7 @@ def verify(level, plan, entry_col, name, inventory=None):
 # ======================================================================
 # Blob building and bank packing
 # ======================================================================
-def build_blob(level, zone, rng):
+def build_blob(level, zone, rng, plan_lookup, door_base=0):
     ems = enemies(level, zone, rng)
     lks = leaks(level, rng)
     tilemap = bytes(tile_index(CHARMAP[ch]) for row in level for ch in row)
@@ -686,6 +749,26 @@ def build_blob(level, zone, rng):
     rects += b'\xFF'
     edata = bytes([len(ems)]) + b''.join(bytes(e) for e in ems)
     ldata = bytes([len(lks)]) + b''.join(bytes(l) for l in lks)
+    # switches: (id, col, row); vaults: (id, col, row, key colour).
+    # rows derive from the plat: platform p keys sit at PLAT_ROWS[p]-2,
+    # floor things at row 22 -- recover the cell from the map itself.
+    sw, va = [], []
+    for r, rows_ in enumerate(level):
+        for c, ch in enumerate(rows_):
+            if ch == '!':
+                sw.append((c, r))
+            elif ch == '$':
+                va.append((c, r))
+    swp = plan_lookup["switches"]
+    vap = plan_lookup["vaults"]
+    sdata = bytes([len(swp)])
+    for sid, p, c in swp:
+        r = 22 if p < 0 else PLAT_ROWS[p] - 2
+        sdata += bytes([sid, c, r])
+    vdata = bytes([len(vap)])
+    for vid, p, c, col in vap:
+        r = 23 if p < 0 else PLAT_ROWS[p] - 1   # grounded, feet level
+        vdata += bytes([vid, c, r, col])
     # elevator door column (x in bytes), #FF when the level has none
     elev = 0xFF
     for c, ch in enumerate(level[22]):
@@ -696,28 +779,31 @@ def build_blob(level, zone, rng):
     enemies_off = rects_off + len(rects)
     head = bytes([rects_off & 255, rects_off >> 8,
                   enemies_off & 255, enemies_off >> 8, elev, 0])
-    return head + tilemap + rects + edata + ldata, len(ems)
+    # trailer: this level's first global door id -- doors number
+    # consecutively in rect order, for the opened-doors bitmask
+    return (head + tilemap + rects + edata + ldata + sdata + vdata
+            + bytes([door_base])), len(ems)
 
 
 def main(asm_path, build_dir):
     rng = random.Random(0x5AF7)          # fixed seed: reproducible builds
     levels = [LEVEL1]
     plans = [{"ladders": [10, 12, 15, 8], "pairs": [], "gaps": [],
-              "keys_at": []}]
+              "keys_at": [], "vaults": [], "switches": []}]
     exit_col = 8                         # level 1 exits at column 8
     idx = 1
     inventory = [0] * 5                  # the verifier's global key bag
+    pressed = set()                      # switches thrown so far
     spare_pool = [0] * 5                 # spare keys sown but not spent
-    n_cross = 0
+    switch_pool = []                     # switch ids sown, vaults pending
+    next_sid = 0
+    n_cross = n_vaults = n_keys = 0
     for zone, count in enumerate(ZONE_SIZE):
         first = 1 if zone == 0 else 0    # zone 0 includes hand-made L1
         for i in range(first, count):
             idx += 1
             has_elev = (idx % 10 == 0)   # lift stops: 10, 20, 30, 40, 50
-            has_med = (idx % 9 == 2)     # medical crates are precious
-            # the key economy, decided before layout: how many spare
-            # keys to sow here, and whether a door may lean on a spare
-            # sown on an earlier level (a CROSS door -- no local key)
+            has_med = (idx >= 20 and idx % 9 == 2)  # meds: level 20 up
             spare_n = (rng.random() < (0.15, 0.35, 0.55)[zone]) + \
                       (zone == 2 and rng.random() < 0.3)
             spares = [rng.randrange(5) for _ in range(spare_n)]
@@ -734,34 +820,61 @@ def main(asm_path, build_dir):
             locals_n = want - len(cross)
             free = [c for c in range(5) if c not in cross]
             local_cols = rng.sample(free, min(locals_n, len(free)))
+            # the vault economy: sow a switch most levels (32 ids max);
+            # offer pending switch ids as vault candidates for the keys
+            # placed here -- their switches are all on EARLIER levels
+            sow_switch = []
+            if idx >= 2 and next_sid < 32 and rng.random() < 0.5:
+                sow_switch = [next_sid]
+            vids = switch_pool[:2]       # at most two vaults a level
             for attempt in range(150):
                 inv_try = inventory[:]
+                prs_try = set(pressed)
                 try:
                     lv, plan = gen_level(rng, zone, exit_col, i,
                                          has_elev, has_med,
-                                         cross, spares, local_cols)
-                    verify(lv, plan, exit_col, f"L{idx}", inv_try)
+                                         cross, spares, local_cols,
+                                         sow_switch, vids)
+                    verify(lv, plan, exit_col, f"L{idx}", inv_try, prs_try)
                     break
                 except AssertionError:
                     continue
             else:
                 raise SystemExit(f"L{idx}: no completable layout found")
             inventory = inv_try
+            pressed = prs_try
+            used_vids = [v[0] for v in plan["vaults"]]
+            switch_pool = [s for s in switch_pool if s not in used_vids]
+            if plan["switches"]:
+                switch_pool.append(plan["switches"][0][0])
+                next_sid += 1
             for c in spares:
                 spare_pool[c] += 1
             n_cross += len(cross)
+            n_vaults += len(plan["vaults"])
+            n_keys += len(plan["keys_at"]) + len(plan["vaults"])
             levels.append(lv)
             plans.append(plan)
             exit_col = plan["ladders"][3]
-    print(f"key economy: {n_cross} cross-level doors, "
-          f"{sum(spare_pool)} spare keys left in the pool", file=sys.stderr)
+    print(f"key economy: {n_cross} cross-level doors, {n_vaults} of "
+          f"{n_keys} keys vaulted ({100*n_vaults//max(1,n_keys)}%), "
+          f"{next_sid} switches, {sum(spare_pool)} spares left",
+          file=sys.stderr)
+
+    # global door ids: consecutive per level, 128 bits of persistence
+    door_bases, did = [], 0
+    for pl in plans:
+        door_bases.append(did)
+        did += len(pl["pairs"])
+    assert did <= 128, f"{did} doors exceed the opened-doors bitmask"
+    print(f"{did} doors carry persistent ids", file=sys.stderr)
 
     # pack blobs into 16K banks (a level never straddles banks)
     banks, table = [b''], []
     total_enemies = 0
     for n, lv in enumerate(levels):
         zone = 0 if n < 19 else 1 if n < 39 else 2
-        blob, ne = build_blob(lv, zone, rng)
+        blob, ne = build_blob(lv, zone, rng, plans[n], door_bases[n])
         total_enemies += ne
         if len(banks[-1]) + len(blob) > BANK_SIZE:
             banks.append(b'')
@@ -807,6 +920,9 @@ def main(asm_path, build_dir):
         w(f"TILE_KEY_BASE   equ {tile_index('keycard_g')}\n")
         w(f"TILE_DOOR_BASE  equ {tile_index('door_g')}\n")
         w(f"TILE_MEDKIT     equ {tile_index('medkit')}\n")
+        w(f"TILE_SWITCH_OFF equ {tile_index('switch_off')}\n")
+        w(f"TILE_SWITCH_ON  equ {tile_index('switch_on')}\n")
+        w(f"TILE_VAULT      equ {tile_index('vault')}\n")
         w(f"GLYPH_SPACE     equ {FONT_ORDER.index(' ')}\n")
         w(f"GLYPH_KEY       equ {len(FONT_ORDER)}\n")
         w(f"GLYPH_HEART     equ {len(FONT_ORDER) + 1}\n")

@@ -547,6 +547,19 @@ ug_no_jump:
         jr nz,ug_no_lasso
         ld a,LASSO_TIME
         ld (lasso_timer),a      ; game_loop resolves the hits this frame
+        ; aim from the held cursor: Up = skyward, Up+side = diagonal,
+        ; neither = the classic side whip
+        ld a,(input_held)
+        bit INP_UP,a
+        ld a,0
+        jr z,ug_aim
+        ld a,(input_held)
+        and INP_HORIZ_MASK
+        ld a,1
+        jr z,ug_aim
+        ld a,2
+ug_aim:
+        ld (lasso_dir),a
         ld a,SFX_WHIP
         call sfx_start
         ret                     ; planting the throw costs the frame
@@ -1761,6 +1774,220 @@ ll_leak:
         ld de,6
         add ix,de
         djnz ll_leak
+ll_switches:
+        ; --- wall switches: remember their cells for touch detection
+        ; and, if already thrown on an earlier visit, show them ON
+        ld a,(hl)
+        inc hl
+        ld (switch_count),a
+        or a
+        jr z,ll_vaults
+        ld b,a
+        ld ix,switch_tab
+ll_sw:
+        ld a,(hl)
+        inc hl
+        ld (ix+0),a             ; switch id (bit in switch_state)
+        ld a,(hl)
+        inc hl
+        ld (ix+1),a             ; map column
+        ld a,(hl)
+        inc hl
+        ld (ix+2),a             ; map row
+        push bc
+        push hl
+        ld a,(ix+0)
+        call switch_bit         ; carry = already pressed
+        jr nc,ll_sw_off
+        ld d,(ix+1)             ; patch the map: lever shown thrown
+        ld e,(ix+2)
+        call map_cell_addr
+        ld (hl),TILE_SWITCH_ON
+ll_sw_off:
+        pop hl
+        pop bc
+        ld de,3
+        add ix,de
+        djnz ll_sw
+ll_vaults:
+        ; --- vaults: an OPEN vault (its switch thrown) becomes the
+        ; keycard it guards, right in the map
+        ld a,(hl)
+        inc hl
+        or a
+        jr z,ll_doors
+        ld b,a
+ll_va:
+        ld a,(hl)
+        inc hl
+        push bc
+        push hl
+        call switch_bit         ; is this vault's switch thrown?
+        pop hl
+        ld a,(hl)
+        inc hl
+        ld d,a                  ; column
+        ld a,(hl)
+        inc hl
+        ld e,a                  ; row
+        ld a,(hl)
+        inc hl
+        pop bc
+        jr nc,ll_va_next        ; sealed: the vault tile stays
+        push bc
+        push hl
+        add a,TILE_KEY_BASE     ; A was the key colour
+        push af                 ; (map_cell_addr eats BC -- keep the
+        call map_cell_addr      ;  tile in AF, not in C!)
+        pop af
+        ld (hl),a
+        pop hl
+        pop bc
+ll_va_next:
+        djnz ll_va
+ll_doors:
+        ; --- trailer: first global door id.  Walk the rects, note each
+        ; door's id, and REOPEN any remembered from an earlier visit --
+        ; an unlocked door stays unlocked for the whole run.
+        ld a,(hl)
+        ld (door_base),a
+        ld ix,(current_rects)
+        ld hl,door_tab
+        ld c,0                  ; doors seen so far
+lld_scan:
+        ld a,(ix+0)
+        cp #FF
+        jr z,lld_done
+        ld a,(ix+4)
+        and TYPE_DOOR
+        jr z,lld_next
+        ld a,(door_base)
+        add a,c                 ; this door's id
+        ld (hl),a
+        inc hl
+        push ix
+        pop de
+        ld (hl),e               ; and its rect address, for the
+        inc hl                  ; open-by-address lookup later
+        ld (hl),d
+        inc hl
+        inc c
+        push hl
+        push bc
+        call door_opened        ; carry = opened on an earlier visit
+        call c,open_door_rect
+        pop bc
+        pop hl
+lld_next:
+        repeat 5
+        inc ix
+        rend
+        jr lld_scan
+lld_done:
+        ld a,c
+        ld (door_count),a
+        ret
+
+; ----------------------------------------------------------------------
+; The opened-doors ledger: 128 bits, one per door in the whole shaft.
+; ----------------------------------------------------------------------
+bit_locate:                     ; A = bit id -> HL += id/8, B = mask
+        ld c,a
+        and 7
+        ld b,a
+        inc b
+        xor a
+        scf
+bl_sh:
+        rla
+        djnz bl_sh
+        ld b,a
+        ld a,c
+        rrca
+        rrca
+        rrca
+        and 31
+        add a,l
+        ld l,a
+        jr nc,bl_nc
+        inc h
+bl_nc:
+        ret
+
+door_opened:                    ; A = door id -> carry if already open
+        ld hl,opened_doors
+        call bit_locate
+        ld a,(hl)
+        and b
+        ret z                   ; (carry clear: still sealed)
+        scf
+        ret
+
+door_mark_open:                 ; A = door id: remember it forever
+        ld hl,opened_doors
+        call bit_locate
+        ld a,(hl)
+        or b
+        ld (hl),a
+        ret
+
+; open_door_rect -- IX = door rect: kill the rect, clear its tiles
+open_door_rect:
+        ld (ix+4),0
+        ld a,(ix+0)
+        srl a
+        srl a
+        ld d,a
+        ld a,(ix+2)
+        srl a
+        srl a
+        srl a
+        ld e,a
+        ld a,(ix+3)
+        srl a
+        srl a
+        srl a
+        ld b,a
+odr_clear:
+        push bc
+        call map_cell_addr
+        ld (hl),TILE_EMPTY
+        call redraw_cell_both
+        pop bc
+        inc e
+        djnz odr_clear
+        ret
+
+; switch_bit -- A = switch id (0-31): carry set if that switch has
+; been thrown.  Uses A,B,C,HL.
+switch_bit:
+        ld c,a
+        and 7                   ; bit within the byte
+        ld b,a
+        inc b
+        xor a
+        scf
+sb_sh:
+        rla
+        djnz sb_sh
+        ld b,a                  ; B = mask
+        ld a,c
+        rrca
+        rrca
+        rrca
+        and 3                   ; byte index (id/8)
+        ld c,a
+        ld hl,switch_state
+        ld a,l
+        add a,c
+        ld l,a
+        jr nc,sb_nc
+        inc h
+sb_nc:
+        ld a,(hl)
+        and b
+        ret z                   ; (and cleared carry: not pressed)
+        scf
         ret
 
 ; ----------------------------------------------------------------------
@@ -1853,7 +2080,7 @@ el_dslot:
         ld (immune_timer),a
         ld hl,lasso_prev        ; no stale rope to restore
         ld (hl),a
-        ld (lasso_prev+3),a
+        ld (lasso_prev+5),a
         ; paint the room into BOTH buffers (the visible top-to-bottom
         ; sweep is our flip-screen transition effect)
         ld a,SCREEN_B/256
@@ -2361,84 +2588,156 @@ ceh_next:
 ; rope fits between the shoulder and the wall; lasso_hits snares any
 ; PERSON whose body crosses the rope line (debris can't be lassoed).
 ; ----------------------------------------------------------------------
-; Out: carry set, B = first rope byte, C = rope width in bytes;
-;      carry clear = jammed against the screen edge.
-lasso_span:
+; lasso_box -- the whip's reach as a box B=x C=y D=w E=h, from
+; lasso_dir and the facing.  Carry clear = jammed against an edge.
+;   horizontal: LASSO_LEN x 6 at arm height, from the shoulder
+;   up:         2 x 16 straight above the head
+;   diagonal:   6 x 14 rising forward at 45 degrees
+lasso_box:
+        ld a,(lasso_dir)
+        or a
+        jr z,lb_horiz
+        dec a
+        jr z,lb_up
+        ; --- diagonal
         ld a,(player_facing)
         or a
-        jr nz,lsp_left
+        jr nz,lb_diag_l
         ld a,(player_x)
-        add a,SPR_W_BYTES       ; from the right shoulder
+        add a,SPR_W_BYTES
         ld b,a
         ld a,SCR_W_BYTES
-        sub b                   ; room to the edge
-        jr lsp_clamp
-lsp_left:
+        sub b
+        jr lb_diag_w
+lb_diag_l:
         ld a,(player_x)
-        sub LASSO_LEN
-        jr nc,lsp_l_ok
-        xor a                   ; clamp at the left wall
-lsp_l_ok:
+        sub 6
+        jr nc,lb_dl
+        xor a
+lb_dl:
         ld b,a
         ld a,(player_x)
         sub b
-lsp_clamp:
+lb_diag_w:
         or a
-        ret z                   ; no room at all (carry is clear)
-        cp LASSO_LEN
-        jr c,lsp_w
-        ld a,LASSO_LEN
-lsp_w:
+        ret z
+        cp 6
+        jr c,lb_dw
+        ld a,6
+lb_dw:
+        ld d,a
+        ld a,(player_y)
+        sub 12
+        jr nc,lb_dy
+        xor a
+lb_dy:
         ld c,a
+        ld a,(player_y)
+        add a,2
+        sub c
+        ld e,a
+        scf
+        ret
+lb_up:
+        ld a,(player_y)
+        sub 16
+        jr nc,lb_uy
+        xor a
+lb_uy:
+        ld c,a
+        ld a,(player_y)
+        sub c
+        or a
+        ret z                   ; head against the top edge
+        ld e,a
+        ld a,(player_x)
+        inc a                   ; the centre columns
+        ld b,a
+        ld d,2
+        scf
+        ret
+lb_horiz:
+        ld a,(player_facing)
+        or a
+        jr nz,lb_left
+        ld a,(player_x)
+        add a,SPR_W_BYTES
+        ld b,a
+        ld a,SCR_W_BYTES
+        sub b
+        jr lb_clamp
+lb_left:
+        ld a,(player_x)
+        sub LASSO_LEN
+        jr nc,lb_lok
+        xor a
+lb_lok:
+        ld b,a
+        ld a,(player_x)
+        sub b
+lb_clamp:
+        or a
+        ret z
+        cp LASSO_LEN
+        jr c,lb_w
+        ld a,LASSO_LEN
+lb_w:
+        ld d,a
+        ld a,(player_y)
+        add a,4                 ; the arm-height band
+        ld c,a
+        ld e,6
         scf
         ret
 
 lasso_hits:
-        call lasso_span
+        call lasso_box
         ret nc
         ld ix,entities
-        ld e,MAX_ENTITIES
+        ld a,MAX_ENTITIES
+        ld (lh_n),a
 lh_loop:
         ld a,(ix+0)
         or a
         jr z,lh_next
         cp ET_PROJ
         jr nc,lh_next           ; only people can be snared
-        ; vertical: does the body cross the rope line (py+6..py+7)?
-        ld a,(player_y)
-        add a,7
-        cp (ix+2)
-        jr c,lh_next            ; enemy hangs below the rope
-        ld a,(ix+2)
-        add a,SPR_H_LINES-1     ; enemy's last line
-        ld l,a
-        ld a,(player_y)
-        add a,6
-        cp l
-        jr z,lh_y_ok
-        jr nc,lh_next           ; enemy stands above the rope
-lh_y_ok:
-        ; horizontal: enemy [x, x+3] vs rope [B, B+C-1]
-        ld a,(ix+1)
+        ld a,(ix+1)             ; X overlap with the box
         add a,SPR_W_BYTES-1
         cp b
-        jr c,lh_next            ; entirely left of the rope
+        jr c,lh_next
         ld a,b
-        add a,c
+        add a,d
         dec a
         cp (ix+1)
-        jr c,lh_next            ; rope ends short of him
+        jr c,lh_next
+        ld a,(ix+2)             ; Y overlap
+        add a,SPR_H_LINES-1
+        cp c
+        jr c,lh_next
+        ld a,c
+        add a,e
+        dec a
+        cp (ix+2)
+        jr c,lh_next
         ld (ix+0),ET_DYING      ; snared!
         ld (ix+8),2
+        push bc
+        push de
         ld a,SFX_PING
-        call sfx_start          ; (preserves DE and the rope in BC)
+        call sfx_start
+        pop de
+        pop bc
 lh_next:
         repeat ENT_SIZE
         inc ix
         rend
-        dec e
+        ld a,(lh_n)
+        dec a
+        ld (lh_n),a
         jr nz,lh_loop
         ret
+
 
 ; ----------------------------------------------------------------------
 ; render_entities -- the per-frame draw pass, double-buffer aware:
@@ -2450,9 +2749,10 @@ lh_next:
 render_entities:
         call erase_player
         ; --- the rope from two frames ago in this buffer, if any
-        ld hl,lasso_prev        ; 3-byte slots {active,x,y} per buffer
+        ld hl,lasso_prev        ; 5-byte slots {act,x,y,w,h} per buffer
         ld a,(buf_index)
         ld c,a
+        add a,a
         add a,a
         add a,c
         ld c,a
@@ -2466,8 +2766,10 @@ render_entities:
         ld b,(hl)
         inc hl
         ld c,(hl)
-        ld d,LASSO_LEN
-        ld e,2
+        inc hl
+        ld d,(hl)
+        inc hl
+        ld e,(hl)
         call restore_area
 re_no_rope:
         ; --- restore under every entity's old image
@@ -2536,29 +2838,95 @@ re_d_next:
         ld a,(lasso_timer)
         cp LASSO_TIME-5
         ret c                   ; recoiled: nothing to draw
-        call lasso_span
+        call lasso_box          ; B,C,D,E = this direction's reach
         ret nc
-        ld d,c                  ; D = rope width (bytes)
-        ld a,(player_y)
-        add a,6                 ; rope rides at arm height
-        ld c,a
-        ld hl,lasso_prev        ; remember it for this buffer's restore
+        ld hl,lasso_prev        ; remember the whole box for restore
         ld a,(buf_index)
-        ld e,a
+        push bc
+        ld c,a
         add a,a
-        add a,e
-        ld e,a
+        add a,a
+        add a,c
+        ld c,a
         push de
         ld d,0
+        ld e,c
         add hl,de
         pop de
+        pop bc
         ld (hl),1
         inc hl
         ld (hl),b
         inc hl
         ld (hl),c
-        ld e,2                  ; 2 lines of rope
-        ld a,#FC                ; both Mode 0 pixels pen 7 (yellow)
+        inc hl
+        ld (hl),d
+        inc hl
+        ld (hl),e
+        ld a,(lasso_dir)
+        or a
+        jr z,rope_horiz
+        dec a
+        jr z,rope_up
+        ; --- the diagonal: stepped 1x2 segments climbing forward
+        ld a,c
+        ld (rp_top),a
+        ld a,c
+        add a,e
+        sub 2
+        ld (rp_y),a
+        ld a,d
+        ld (rp_n),a
+        ld a,b                  ; start at the shoulder-side end
+        ld (rp_x),a
+        ld a,(player_facing)
+        or a
+        jr z,rd_loop
+        ld a,b
+        add a,d
+        dec a
+        ld (rp_x),a
+rd_loop:
+        ld a,(rp_n)
+        or a
+        ret z
+        dec a
+        ld (rp_n),a
+        ld a,(rp_x)
+        ld b,a
+        ld a,(rp_y)
+        ld c,a
+        ld d,1
+        ld e,2
+        ld a,#FC                ; pen 7 rope
+        call fill_rect
+        ld a,(player_facing)
+        or a
+        ld a,(rp_x)
+        jr nz,rd_left
+        inc a
+        jr rd_sx
+rd_left:
+        dec a
+rd_sx:
+        ld (rp_x),a
+        ld a,(rp_y)
+        sub 2
+        ld hl,rp_top
+        cp (hl)
+        ret c                   ; ran out of sky
+        ld (rp_y),a
+        jr rd_loop
+rope_up:
+        ld d,1                  ; a thin line straight up
+        ld a,#FC
+        jp fill_rect
+rope_horiz:
+        ld a,(player_y)
+        add a,6                 ; ride at arm height
+        ld c,a
+        ld e,2
+        ld a,#FC
         jp fill_rect
 
 ; entity_sprite -- DE = sprite frame for the entity at IX
@@ -2671,6 +3039,62 @@ ck_cell:                        ; keycards and medkits, by tile index
         pop hl
         jr ck_took
 ck_not_key:
+        cp TILE_SWITCH_OFF
+        jr nz,ck_not_switch
+        ; a wall switch: find its record by cell, set its bit --
+        ; somewhere up (or down) the shaft, a vault slides open
+        push de
+        ld a,(switch_count)
+        or a
+        jr z,ck_sw_out
+        ld b,a
+        ld ix,switch_tab
+ck_sw_find:
+        ld a,(ix+1)
+        cp d                    ; same column?
+        jr nz,ck_sw_next
+        ld a,(ix+2)
+        cp e                    ; same row?
+        jr z,ck_sw_hit
+ck_sw_next:
+        inc ix
+        inc ix
+        inc ix
+        djnz ck_sw_find
+ck_sw_out:
+        pop de
+        ret
+ck_sw_hit:
+        ld a,(ix+0)             ; set bit id in switch_state
+        ld c,a
+        and 7
+        ld b,a
+        inc b
+        xor a
+        scf
+ck_sw_sh:
+        rla
+        djnz ck_sw_sh
+        ld e,a                  ; E = mask
+        ld a,c
+        rrca
+        rrca
+        rrca
+        and 3
+        ld c,a
+        ld b,0
+        ld hl,switch_state
+        add hl,bc
+        ld a,(hl)
+        or e
+        ld (hl),a
+        pop de
+        call map_cell_addr      ; flip the lever tile to ON
+        ld (hl),TILE_SWITCH_ON
+        call redraw_cell_both
+        ld a,SFX_PING
+        jp sfx_start
+ck_not_switch:
         cp TILE_MEDKIT
         ret nz
         ; a medical crate: 1-4 energy, spill-over banks a life
@@ -2763,32 +3187,35 @@ cdo_open:
         or a
         ret z                   ; no key of THIS colour: stays locked
         dec (hl)
-        ld (ix+4),0             ; the rect will never match again
+        ; find this door's id (by rect address) and remember it open
+        push ix
+        pop de
+        ld hl,door_tab
+        ld a,(door_count)
+        or a
+        jr z,cdo_no_id
+        ld b,a
+cdo_find_id:
+        ld c,(hl)               ; candidate id
+        inc hl
+        ld a,(hl)
+        inc hl
+        cp e
+        jr nz,cdo_id_next
+        ld a,(hl)
+        cp d
+        jr z,cdo_id_hit
+cdo_id_next:
+        inc hl
+        djnz cdo_find_id
+        jr cdo_no_id
+cdo_id_hit:
+        ld a,c
+        call door_mark_open     ; stays open on every future visit
+cdo_no_id:
+        call open_door_rect
         ld a,SFX_PING
-        call sfx_start
-        ld a,(ix+0)             ; the door is 1 column x H rows of
-        srl a                   ; tile-aligned cells: clear them all
-        srl a
-        ld d,a
-        ld a,(ix+2)
-        srl a
-        srl a
-        srl a
-        ld e,a
-        ld a,(ix+3)
-        srl a
-        srl a
-        srl a
-        ld b,a                  ; B = rows of door tile
-cdo_clear:
-        push bc
-        call map_cell_addr
-        ld (hl),TILE_EMPTY
-        call redraw_cell_both
-        pop bc
-        inc e
-        djnz cdo_clear
-        ret
+        jp sfx_start
 
 ; ======================================================================
 ;
@@ -3102,6 +3529,16 @@ ms_blink:
         ld (keys_held+3),a
         ld (keys_held+4),a
         ld (visited_stops),a    ; the lift knows nothing yet
+        ld (switch_state),a     ; every vault sealed again
+        ld (switch_state+1),a
+        ld (switch_state+2),a
+        ld (switch_state+3),a
+        ld hl,opened_doors      ; ...and every door shut
+        ld b,16
+ms_cd:
+        ld (hl),a
+        inc hl
+        djnz ms_cd
         ld (immune_timer),a
         ld a,ENERGY_MAX
         ld (player_energy),a
@@ -3794,10 +4231,23 @@ entry_y:        defb 176        ; where the next enter_level places us
 respawn_y:      defb 176        ; entry point of this level (respawn)
 elevator_col:   defb #FF        ; lift door x on this level (#FF none)
 visited_stops:  defb 0          ; bitmask of lift stops reached on foot
+switch_state:   defs 4,0        ; 32 vault switches, one bit each
+opened_doors:   defs 16,0       ; 128 doors, one bit each: stay open
+door_base:      defb 0          ; first global door id on this level
+door_count:     defb 0
+door_tab:       defs 4*3,0      ; per door here: id, rect address
+switch_count:   defb 0          ; switches on the current level
+switch_tab:     defs 8*3,0      ; per switch: id, map col, map row
 slide_timer:    defb 0          ; frames of slide burst left
 slide_lock:     defb 0          ; one slide per Down press
 lasso_timer:    defb 0          ; whip out + recoil countdown
-lasso_prev:     defs 6,0        ; per buffer: {active,x,y} rope image
+lasso_dir:      defb 0          ; 0 side, 1 up, 2 diagonal
+lasso_prev:     defs 10,0       ; per buffer: {act,x,y,w,h} rope box
+lh_n:           defb 0          ; lasso_hits' loop counter
+rp_x:           defb 0          ; diagonal rope walker
+rp_y:           defb 0
+rp_n:           defb 0
+rp_top:         defb 0
 ra_c0:          defb 0          ; restore_area's cell window scratch
 ra_c1:          defb 0
 ra_r0:          defb 0

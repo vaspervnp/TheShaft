@@ -64,8 +64,20 @@ surplus banks a whole life (cap 9).
 red — tinted by each zone's palette) and their keycards are never
 beside them: a door's key waits on a **lower platform, the bottom
 floor — or an earlier level entirely**. Levels sow *spare* keys for
-doors further up the shaft; 23 doors have no key on their own level at
-all. The build-time verifier threads one global key inventory through
+doors further up the shaft; 28 doors have no key on their own level at
+all. And about **a quarter of all keys sit inside sealed vaults**:
+somewhere on an *earlier* level is the wall switch that opens each one
+(its state persists for the whole run), so the deepest chains run
+switch → vault → door across three different levels. **Opened doors
+stay open for the whole run** — every door has a persistent id in a
+128-bit ledger, and revisited levels reload with their unlocked doors
+already gone (keys, by contrast, respawn on revisit). Medical crates
+only start appearing from level 20.
+
+**The lasso aims from the cursor**: plain Z whips sideways as before;
+hold **up** for a straight overhead snare (2 px wide, 16 tall), or
+**up + a direction** for a 45° rising diagonal — all clamped at walls
+and roof, all drawn as stepped rope segments. The build-time verifier threads one global key inventory through
 the whole 59-level climb, so the forward route always works — and if
 you miss a key, levels reload fresh when revisited (taken keys are
 shown again), so with downward travel and the elevators nothing is
