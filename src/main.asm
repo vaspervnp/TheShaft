@@ -1645,14 +1645,15 @@ fr_same:
 ; address (#4000-based), word blob length.
 ; ----------------------------------------------------------------------
 load_level:
-        dec a
-        ld e,a
-        add a,a
-        add a,a
-        add a,e                 ; x5
-        ld e,a
-        ld d,0
-        ld hl,level_table
+        dec a                   ; table offset = (level-1)*5 -- in 16
+        ld l,a                  ; BITS: 59 entries span 295 bytes, and
+        ld h,0                  ; 8-bit maths overflowed at level 53!
+        ld e,l
+        ld d,h
+        add hl,hl               ; x2
+        add hl,hl               ; x4
+        add hl,de               ; x5
+        ld de,level_table
         add hl,de
         ld a,(hl)               ; bank select value
         inc hl
@@ -1752,8 +1753,8 @@ ll_next:
         inc hl
         ld (leak_count),a
         or a
-        ret z
-        ld b,a
+        jr z,ll_switches        ; no leaks -- but switches, vaults and
+        ld b,a                  ; doors still follow in the blob!
         ld ix,leaks
 ll_leak:
         ld a,(hl)
