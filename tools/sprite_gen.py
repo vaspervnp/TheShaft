@@ -85,10 +85,15 @@ def convert(art, label="sprite"):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        with open(sys.argv[1]) as f:
+    args = [a for a in sys.argv[1:] if a != "--flip"]
+    flip = "--flip" in sys.argv
+    if args:
+        with open(args[0]) as f:
             art = f.read()
-        name = sys.argv[1].rsplit("/", 1)[-1].split(".")[0]
+        name = args[0].rsplit("/", 1)[-1].split(".")[0]
     else:
         art, name = MECHANIC, "spr_mechanic"
+    if flip:                       # mirror horizontally: art-level reverse
+        art = "\n".join(line[::-1] for line in art.splitlines())
+        name += "_flip"
     print(convert(art, name))

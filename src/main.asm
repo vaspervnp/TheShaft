@@ -67,9 +67,10 @@ GA_RAM_BASE     equ #C0         ; RAM config: plain main 64K (no banking)
 ; ----------------------------------------------------------------------
 INP_LEFT        equ 0
 INP_RIGHT       equ 1
-INP_UP          equ 2           ; will become "climb ladder"
-INP_DOWN        equ 3
-INP_FIRE        equ 4           ; will become "jump"
+INP_UP          equ 2           ; climb
+INP_DOWN        equ 3           ; climb down / duck / slide
+INP_FIRE        equ 4           ; jump (Space / joystick fire 1)
+INP_ACT         equ 5           ; lasso (Z / joystick fire 2)
 
 ; Player sprite metrics (Mode 0: 1 byte = 2 pixels)
 SPR_W_BYTES     equ 4           ; 8 pixels wide
@@ -118,16 +119,43 @@ INP_HORIZ_MASK  equ #03         ; (1<<INP_LEFT) | (1<<INP_RIGHT)
 ; ----------------------------------------------------------------------
 ; Entities and game state
 ; ----------------------------------------------------------------------
-MAX_DRONES      equ 4           ; runtime slots (levels use up to 2)
-; drone record layout (8 bytes):
-;  +0 active  +1 x  +2 y  +3 dir (signed, +/-speed)  +4 speed
-;  +5 xmin    +6 xmax     +7 animation ticker
+MAX_ENTITIES    equ 8           ; enemies, debris and drips share it
+ENT_SIZE        equ 10
+; entity record layout (10 bytes):
+;  +0 type  +1 x  +2 y  +3 dir (signed +/-speed)  +4 speed/interval
+;  +5 xmin  +6 xmax  +7 animation ticker  +8 timer  +9 spare
+ET_NONE         equ 0
+ET_RIOT         equ 1           ; riot gear: slow patrol, shield up
+ET_COAT         equ 2           ; long coat + crowbar: fast patrol
+ET_THROW        equ 3           ; drops debris from the platform above
+ET_PROJ         equ 4           ; the falling debris itself
+ET_DYING        equ 5           ; being erased from both buffers
+ET_DRIP         equ 6           ; falling lubricant (colour in +9)
 START_LIVES     equ 3
+
+; Energy: every hit costs one point behind a 3-second immunity
+; flicker; at zero a life goes and the tank refills.  Medical crates
+; hold 1-4 points -- spilling past 5 banks a whole life.
+ENERGY_MAX      equ 5
+IMMUNE_TIME     equ 150         ; 3 seconds at 50 frames/s
+MAX_LEAKS       equ 4           ; dripping ceiling pipes per level
+
+; The lasso: whip length in bytes, active/cooldown timing
+LASSO_LEN       equ 8           ; 16 pixels of rope
+LASSO_TIME      equ 10          ; timer start; rope visible while >= 5
+SLIDE_TIME      equ 12          ; frames of slide burst at 2 bytes/frame
+
+; Fall damage: platforms sit 48 lines apart and a jump-down adds at
+; most ~20 lines of arc, so a measured drop beyond 72 lines means MORE
+; than one floor -- that costs a life.  Dropping through a single
+; platform gap (exactly 48) is always safe.
+FALL_HURT       equ 72
 
 ; Sound effects (see the AY section for what each does)
 SFX_JUMP        equ 1
 SFX_HIT         equ 2
 SFX_PING        equ 3
+SFX_WHIP        equ 4
 
         org #1000
 
@@ -160,6 +188,7 @@ start:
         ldir
         im 1
 
+        ld hl,zone_palettes     ; boot in the machine-deck colours
         call set_palette
         call clear_buffers
 
@@ -175,8 +204,8 @@ start:
 
         ei
 
-        ; --- Park every level in the second 64K, then run the menu.
-        call copy_levels_to_bank
+        ; The BASIC loader already parked all 59 levels in extra-RAM
+        ; banks 4-6 before CALLing us, so: straight to the menu.
         jp menu_screen
 
 ; ======================================================================
@@ -201,12 +230,35 @@ game_loop:
         ld a,(player_y)
         cp 8                    ; crossed the top edge of the screen?
         jp c,next_level         ; up one level of the shaft
-        call update_drones      ; patrol movement + animation ticker
-        call check_drone_hit    ; player box vs drone boxes
-        jp c,player_die
+        ; climbing at the very bottom with Down still held? then the
+        ; ladder continues into the level below
+        ld a,(player_state)
+        cp ST_CLIMB
+        jr nz,gl_no_desc
+        ld a,(player_y)
+        cp 176
+        jr c,gl_no_desc
+        ld a,(input_held)
+        bit INP_DOWN,a
+        jr z,gl_no_desc
+        ld a,(current_level)
+        dec a
+        jp nz,prev_level        ; (level 1's deck is the true bottom)
+gl_no_desc:
+        ld a,(fall_hit)         ; landed from more than one floor up?
+        or a
+        call nz,take_fall_hit
+        call check_elevator     ; standing at a lift door + Up/Down?
+        call update_entities    ; patrols, throwers, falling debris
+        ld a,(lasso_timer)      ; whip thrown this frame? resolve it
+        cp LASSO_TIME           ; against the just-moved enemies
+        call z,lasso_hits
+        call update_leaks       ; ceiling pipes shed their drops
+        call check_enemy_hit    ; player box vs every hostile box
+        call c,take_hit         ; costs energy, not (immediately) life
         call check_keycards     ; touching a keycard tile? collect it
         call check_doors        ; pushing a door with a card? open it
-        call render_entities    ; restore tiles, draw drones + player
+        call render_entities    ; restore tiles, draw everyone + rope
         call draw_hud           ; keycards (left) and lives (right)
         ld hl,frame_ctr
         inc (hl)
@@ -344,18 +396,27 @@ ri_down:
         set INP_DOWN,c
 ri_no_down:
 
-        ; ---- FIRE : joystick fire 1 or 2, or Space (line 5, bit 7)
+        ; ---- FIRE (jump) : joystick fire 1, or Space (line 5, bit 7)
         ld a,(key_matrix+5)
         cpl
         rlca                    ; Space -> carry
         jr c,ri_fire
         bit 5,b                 ; fire 1
-        jr nz,ri_fire
-        bit 4,b                 ; fire 2
         jr z,ri_no_fire
 ri_fire:
         set INP_FIRE,c
 ri_no_fire:
+
+        ; ---- ACT (lasso) : joystick fire 2, or Z (line 8, bit 7)
+        ld a,(key_matrix+8)
+        cpl
+        rlca                    ; Z -> carry
+        jr c,ri_act
+        bit 4,b                 ; fire 2
+        jr z,ri_no_act
+ri_act:
+        set INP_ACT,c
+ri_no_act:
 
         ; ---- edge detection: new = now AND NOT before
         ld hl,input_held
@@ -436,11 +497,38 @@ sk_row:
 ; player is never inside a wall, so nothing needs pushing back out.
 ; ======================================================================
 update_player:
+        ld hl,lasso_timer       ; the whip recoils whatever we're doing
+        ld a,(hl)
+        or a
+        jr z,up_lt
+        dec (hl)
+up_lt:
+        ld hl,immune_timer      ; the hit flicker fades likewise
+        ld a,(hl)
+        or a
+        jr z,up_im
+        dec (hl)
+up_im:
+        ld a,(input_held)       ; facing follows the pushed direction
+        bit INP_LEFT,a          ; (even when the step itself is blocked)
+        jr z,up_fr
+        ld a,1
+        ld (player_facing),a    ; 1 = left
+up_fr:
+        ld a,(input_held)
+        bit INP_RIGHT,a
+        jr z,up_fd
+        xor a
+        ld (player_facing),a    ; 0 = right
+up_fd:
+        xor a                   ; ducking and "did we move" are
+        ld (player_duck),a      ; recomputed every frame
+        ld (player_moved),a
         ld a,(player_state)
         or a
         jr z,upd_ground
         dec a                   ; ST_CLIMB?
-        jr z,upd_climb
+        jp z,upd_climb
         jp upd_air
 
 ; --------------------------- GROUNDED ---------------------------------
@@ -451,7 +539,19 @@ upd_ground:
         call start_jump         ; airborne with full upward velocity...
         jp move_horizontal      ; ...and may steer this same frame
 ug_no_jump:
-        ld a,(input_held)       ; Up/Down: try to mount a ladder
+        ld a,(input_new)        ; Act = crack the lasso (press edge,
+        bit INP_ACT,a           ; only once the rope has recoiled)
+        jr z,ug_no_lasso
+        ld a,(lasso_timer)
+        or a
+        jr nz,ug_no_lasso
+        ld a,LASSO_TIME
+        ld (lasso_timer),a      ; game_loop resolves the hits this frame
+        ld a,SFX_WHIP
+        call sfx_start
+        ret                     ; planting the throw costs the frame
+ug_no_lasso:
+        ld a,(input_held)       ; Up: try to mount a ladder
         bit INP_UP,a
         jr z,ug_no_up
         ld a,(player_y)
@@ -460,20 +560,77 @@ ug_no_jump:
         call try_mount
         ret c                   ; mounted: climbing consumed the frame
 ug_no_up:
-        ld a,(input_held)
+        ld a,(input_held)       ; Down: ladder first...
         bit INP_DOWN,a
-        jr z,ug_no_down
+        jr z,ug_down_off
         ld a,(player_y)
         add a,2
         ld c,a
         call try_mount
         ret c
-ug_no_down:
-        call move_horizontal    ; walk...
-        call is_supported       ; ...then is the ground still there?
+        ; ...no ladder below: Down+direction = slide, Down alone = duck
+        ld a,(input_held)
+        and INP_HORIZ_MASK
+        jr z,ug_duck
+        ld a,(slide_lock)
         or a
-        ret nz                  ; something real underfoot: stay put
-        jp start_fall           ; walked off an edge: drop from rest
+        jr nz,ug_duck           ; one slide per Down press
+        ld a,SLIDE_TIME
+        ld (slide_timer),a
+        ld a,1
+        ld (slide_lock),a
+        jr ug_duck
+ug_down_off:
+        xor a
+        ld (slide_lock),a       ; Down released: the slide is re-armed
+        jr ug_move
+ug_duck:
+        ld a,1                  ; low profile: throwers' debris and
+        ld (player_duck),a      ; crowbar swings pass over your head
+ug_move:
+        ld a,(slide_timer)      ; sliding: 2 bytes/frame burst in the
+        or a                    ; facing direction, hitbox stays low
+        jr z,ug_walk
+        dec a
+        ld (slide_timer),a
+        ld a,1
+        ld (player_duck),a
+        call slide_step
+        call slide_step
+        jr ug_support
+ug_walk:
+        ld a,(player_duck)      ; ducking in place: no creeping
+        or a
+        jr nz,ug_support
+        call move_horizontal
+ug_support:
+        call is_supported       ; is the ground still there?
+        or a
+        ret nz
+        jp start_fall           ; slid or walked off an edge
+
+; slide_step -- one try-then-commit byte in the facing direction
+slide_step:
+        ld a,(player_facing)
+        or a
+        jr nz,ss_left
+        ld a,(player_x)
+        cp SCR_W_BYTES-SPR_W_BYTES
+        ret nc
+        inc a
+        jr ss_try
+ss_left:
+        ld a,(player_x)
+        or a
+        ret z
+        dec a
+ss_try:
+        call solid_at_x
+        ret c                   ; wall/crate/door stops the slide
+        ld (player_x),a
+        ld a,1
+        ld (player_moved),a
+        ret
 
 ; --------------------------- CLIMBING ---------------------------------
 upd_climb:
@@ -553,7 +710,7 @@ ua_vy_ok:
         ld (player_vy),hl
         ld a,ST_GROUND
         ld (player_state),a
-        ; fall-height hook (future: damage, landing thud, dust puff)
+        ; fall-height accounting: measured from the arc's apex
         ld a,(fall_start)
         ld b,a
         ld a,(player_y)
@@ -562,6 +719,10 @@ ua_vy_ok:
         xor a                   ; landed above the apex? then no fall
 ua_keep_fall:
         ld (last_fall),a
+        cp FALL_HURT+1          ; more than one floor?  that hurts --
+        ret c                   ; the game loop collects the bruise
+        ld a,1
+        ld (fall_hit),a
         ret
 ua_rising:
         ; ---- RISING: head into a slab?
@@ -627,6 +788,8 @@ move_horizontal:
         jr c,mh_no_left
         ld (player_x),a
         ld e,1
+        ld a,e
+        ld (player_moved),a     ; feeds the walk animation
 mh_no_left:
         ld a,(input_held)
         bit INP_RIGHT,a
@@ -639,6 +802,8 @@ mh_no_left:
         jr c,mh_no_right
         ld (player_x),a
         ld e,1
+        ld a,e
+        ld (player_moved),a
 mh_no_right:
         ret
 
@@ -801,7 +966,54 @@ draw_player:
         ld a,(player_y)
         ld (hl),a
         ld c,a
-        ld de,spr_mechanic
+        ld a,(immune_timer)     ; hit flicker: skip every other image
+        or a
+        jr z,dp_solid           ; (the slot above still gets restored)
+        ld a,(frame_ctr)
+        and 2
+        ret nz
+dp_solid:
+        ld a,(player_duck)      ; crouched frame while ducking/sliding
+        or a
+        jr z,dp_stand
+        ld de,spr_mech_duck
+        jp draw_sprite_8x16
+dp_stand:
+        ; climbing has its own back view: he looks at the ladder, and
+        ; his hands swap high/low as he goes (every 4 lines of height)
+        ld a,(player_state)
+        cp ST_CLIMB
+        jr nz,dp_facing
+        ld de,spr_mech_climb
+        ld a,(player_y)
+        and 4
+        jr z,dp_draw
+        jr dp_stride
+dp_facing:
+        ld de,spr_mech_r        ; face the way we last pushed
+        ld a,(player_facing)
+        or a
+        jr z,dp_frame
+        ld de,spr_mech_l
+dp_frame:
+        ; pick frame A (stand) or B (stride, +128 bytes):
+        ;   airborne -- stride pose
+        ;   walking  -- alternate every 8 frames, only while moving
+        ld a,(player_state)
+        cp ST_AIR
+        jr z,dp_stride
+dp_ground:
+        ld a,(player_moved)
+        or a
+        jr z,dp_draw
+        ld a,(frame_ctr)
+        and 8
+        jr z,dp_draw
+dp_stride:
+        ld hl,128               ; frame B sits right after frame A
+        add hl,de
+        ex de,hl
+dp_draw:
         jp draw_sprite_8x16
 
 prev_slot:                      ; HL = prev_pos + 2*buf_index
@@ -1242,29 +1454,56 @@ draw_tile:
 ; just drawing the truth again.
 ; ----------------------------------------------------------------------
 restore_tiles:
-        ld a,b                  ; D = leftmost tile column = x/4
+        ld d,SPR_W_BYTES        ; the classic sprite-sized case
+        ld e,SPR_H_LINES
+        ; fall through into the general version
+
+; ----------------------------------------------------------------------
+; restore_area -- re-blit every map cell covering an arbitrary
+; rectangle: B=x (bytes), C=y (lines), D=w (bytes), E=h (lines).
+; Used for sprites (4x16), the lasso rope (8x2), anything.
+; draw_map_tile clips cells that fall off the map, so callers can be
+; sloppy about edges.
+; ----------------------------------------------------------------------
+restore_area:
+        ld a,b
         srl a
         srl a
+        ld (ra_c0),a            ; first tile column
+        ld a,b
+        add a,d
+        dec a
+        srl a
+        srl a
+        ld (ra_c1),a            ; last tile column
+        ld a,c
+        srl a
+        srl a
+        srl a
+        ld (ra_r0),a            ; first tile row
+        ld a,c
+        add a,e
+        dec a
+        srl a
+        srl a
+        srl a
+        ld (ra_r1),a            ; last tile row
+        ld a,(ra_c0)
         ld d,a
-        ld a,c                  ; E = topmost tile row = y/8
-        srl a
-        srl a
-        srl a
+ra_col:
+        ld a,(ra_r0)
         ld e,a
-        ; Walk the 2x3 neighbourhood in a zig-zag so D/E themselves do
-        ; the bookkeeping; draw_map_tile preserves them and clips the
-        ; cells that fall off the map's right/bottom edge.
-        call draw_map_tile      ; (D  , E  )
+ra_row:
+        call draw_map_tile      ; preserves D,E; clips off-map cells
         inc e
-        call draw_map_tile      ; (D  , E+1)
-        inc e
-        call draw_map_tile      ; (D  , E+2)
+        ld a,(ra_r1)
+        cp e
+        jr nc,ra_row
         inc d
-        call draw_map_tile      ; (D+1, E+2)
-        dec e
-        call draw_map_tile      ; (D+1, E+1)
-        dec e
-        jp draw_map_tile        ; (D+1, E  ) -- tail call
+        ld a,(ra_c1)
+        cp d
+        jr nc,ra_col
+        ret
 
 ; ----------------------------------------------------------------------
 ; fill_rect -- flood a rectangle of screen bytes with one value
@@ -1320,76 +1559,88 @@ fr_same:
 ;     bank is in -- our code and stack live below #4000 by design.
 ; We keep interrupts off during a switch anyway: cheap insurance.
 ;
-; All level blobs are copied into bank 4 at boot; entering a level
-; copies one blob back down into level_buffer (main RAM).  That copy
-; is the live, WRITABLE level: keycards vanish and doors open by
-; editing it, and a respawn just fetches a fresh copy from the bank.
+; The 59 level blobs span THREE banks (4, 5 and 6): the BASIC loader
+; pages each bank in and LOADs a levelsN.bin file straight into it
+; before the game even starts.  Entering a level pages the right bank
+; back in and copies one blob down into level_buffer (main RAM).
+; That copy is the live, WRITABLE level: keycards vanish and doors
+; open by editing it, and a respawn just fetches a fresh copy.
 ;
 ; ======================================================================
-copy_levels_to_bank:
-        di
-        ld bc,#7FC4             ; extra page 0 (bank 4) over #4000
-        out (c),c
-        ld hl,levels_blob
-        ld de,#4000
-        ld bc,LEVELS_BLOB_LEN
-        ldir
-        ld bc,#7FC0             ; straight 64K again
-        out (c),c
-        ei
-        ret
-
-; ----------------------------------------------------------------------
-; load_level -- fetch level A (1..LEVEL_COUNT) from bank 4 into
-; level_buffer, wire the current_* pointers, spawn its drones.
+; load_level -- fetch level A (1..LEVEL_COUNT) from its bank into
+; level_buffer, apply the zone palette, wire pointers, spawn enemies.
+; Table entry (5 bytes): bank select value (#C4..#C6), word source
+; address (#4000-based), word blob length.
 ; ----------------------------------------------------------------------
 load_level:
-        dec a                   ; table entry: word offset, word length
+        dec a
+        ld e,a
         add a,a
         add a,a
+        add a,e                 ; x5
         ld e,a
         ld d,0
         ld hl,level_table
         add hl,de
+        ld a,(hl)               ; bank select value
+        inc hl
+        push af
         ld e,(hl)
         inc hl
-        ld d,(hl)
+        ld d,(hl)               ; DE = source address in the bank
         inc hl
         ld c,(hl)
         inc hl
-        ld b,(hl)               ; BC = length, DE = offset in the bank
-        ld hl,#4000
-        add hl,de               ; HL = source (inside the banked page)
+        ld b,(hl)               ; BC = blob length
+        ex de,hl                ; HL = source
         ld de,level_buffer
+        pop af
         di
         push bc
-        ld bc,#7FC4
-        out (c),c               ; bank in...
+        ld b,#7F
+        ld c,a
+        out (c),c               ; the level's bank over #4000...
         pop bc
-        ldir                    ; ...copy the level down to main RAM...
+        ldir                    ; ...copy the blob down to main RAM...
         ld bc,#7FC0
-        out (c),c               ; ...bank out
+        out (c),c               ; ...straight 64K again
         ei
+        ; --- zone palette: 1-19 mech, 20-39 agri, 40-59 admin
+        ld hl,zone_palettes
+        ld de,16
+        ld a,(current_level)
+        cp 20
+        jr c,ll_pal
+        add hl,de
+        cp 40
+        jr c,ll_pal
+        add hl,de
+ll_pal:
+        call set_palette
         ; --- wire the pointers into the fresh copy
-        ld hl,level_buffer+4    ; map follows the 2-word header
+        ld hl,level_buffer+6    ; map follows the 6-byte header
         ld (current_map),hl
+        ld a,(level_buffer+4)   ; header +4: elevator door column
+        ld (elevator_col),a     ; (#FF = this level has no lift)
         ld de,level_buffer
         ld hl,(level_buffer)    ; header +0: rects offset
         add hl,de
         ld (current_rects),hl
-        ld hl,(level_buffer+2)  ; header +2: drone list offset
+        ld hl,(level_buffer+2)  ; header +2: enemy list offset
         add hl,de
-        ; --- unpack drone spawns into the runtime array
+        ; --- unpack enemy spawns into the runtime pool
         ld a,(hl)               ; A = spawn count
         inc hl
-        ld ix,drones
-        ld b,MAX_DRONES
+        ld ix,entities
+        ld b,MAX_ENTITIES
 ll_slot:
         push bc
         or a
         jr z,ll_empty           ; out of spawns: clear remaining slots
         dec a
-        ld (ix+0),1             ; active
+        ld c,(hl)
+        inc hl
+        ld (ix+0),c             ; type (RIOT/COAT/THROW)
         ld c,(hl)
         inc hl
         ld (ix+1),c             ; x
@@ -1398,23 +1649,59 @@ ll_slot:
         ld (ix+2),c             ; y
         ld c,(hl)
         inc hl
-        ld (ix+3),c             ; dir: start moving right (+speed)
-        ld (ix+4),c             ; speed
+        ld (ix+3),c             ; patrollers: dir = +speed to start
+        ld (ix+4),c             ; speed -- or a thrower's interval
         ld c,(hl)
         inc hl
-        ld (ix+5),c             ; patrol left bound
+        ld (ix+5),c             ; xmin -- or a thrower's phase
         ld c,(hl)
         inc hl
-        ld (ix+6),c             ; patrol right bound
+        ld (ix+6),c             ; xmax
         ld (ix+7),0             ; animation ticker
+        ld (ix+8),0
+        push af
+        ld a,(ix+0)             ; throwers start their wind-up at the
+        cp ET_THROW             ; phase, so barrages don't synchronise
+        jr nz,ll_no_throw
+        ld a,(ix+5)
+        ld (ix+8),a
+ll_no_throw:
+        pop af
         jr ll_next
 ll_empty:
-        ld (ix+0),0
+        ld (ix+0),ET_NONE
 ll_next:
         pop bc
-        ld de,8
+        ld de,ENT_SIZE
         add ix,de
         djnz ll_slot
+        ; --- and after the enemies: the leaky ceiling pipes
+        ld a,(hl)
+        inc hl
+        ld (leak_count),a
+        or a
+        ret z
+        ld b,a
+        ld ix,leaks
+ll_leak:
+        ld a,(hl)
+        inc hl
+        ld (ix+0),a             ; x
+        ld a,(hl)
+        inc hl
+        ld (ix+1),a             ; drip spawn y (below the pipe)
+        ld a,(hl)
+        inc hl
+        ld (ix+2),a             ; colour
+        ld a,(hl)
+        inc hl
+        ld (ix+3),a             ; interval
+        ld a,(hl)
+        inc hl
+        ld (ix+4),a             ; first countdown = phase (staggered)
+        ld de,6
+        add ix,de
+        djnz ll_leak
         ret
 
 ; ----------------------------------------------------------------------
@@ -1426,17 +1713,43 @@ enter_level:
         ld sp,#1000
         ld a,(player_x)
         ld (respawn_x),a        ; where death brings us back
-        ld a,176                ; emerge from the floor of the new room
-        ld (player_y),a
+        ld a,(entry_y)          ; 176 climbing up / via lift,
+        ld (player_y),a         ; 8 when descending in from above
+        ld (respawn_y),a
         xor a
         ld (player_yfrac),a
         ld (last_fall),a
         ld hl,0
         ld (player_vy),hl
-        ; arriving on the entry ladder? keep climbing; else stand
+        ; is this one of the elevator stops?  then remember the visit
+        ld hl,elev_stops
+        ld c,0
+        ld b,ELEV_COUNT
+        ld a,(current_level)
+el_vs:
+        cp (hl)
+        jr z,el_mark
+        inc hl
+        inc c
+        djnz el_vs
+        jr el_vs_done
+el_mark:
+        ld b,c                  ; set bit C of visited_stops
+        inc b
+        xor a
+        scf
+el_sh:
+        rla
+        djnz el_sh
+        ld hl,visited_stops
+        or (hl)
+        ld (hl),a
+el_vs_done:
+        ; arriving on a ladder? keep climbing; else stand
         ld a,(player_x)
         ld b,a
-        ld c,176
+        ld a,(entry_y)
+        ld c,a
         call find_ladder
         jr nc,el_ground
         ld (player_x),a         ; snap to the rails
@@ -1453,9 +1766,9 @@ el_state:
         ld a,(player_y)
         ld (prev_pos+1),a
         ld (prev_pos+3),a
-        ld ix,drones            ; same for every drone slot
-        ld hl,drone_prev
-        ld b,MAX_DRONES
+        ld ix,entities          ; same for every entity slot
+        ld hl,entity_prev
+        ld b,MAX_ENTITIES
 el_dslot:
         ld a,(ix+1)
         ld (hl),a
@@ -1469,9 +1782,19 @@ el_dslot:
         ld a,(ix+2)
         ld (hl),a
         inc hl
-        ld de,8
+        ld de,ENT_SIZE
         add ix,de
         djnz el_dslot
+        xor a                   ; fresh combat state
+        ld (lasso_timer),a
+        ld (slide_timer),a
+        ld (slide_lock),a
+        ld (player_duck),a
+        ld (fall_hit),a
+        ld (immune_timer),a
+        ld hl,lasso_prev        ; no stale rope to restore
+        ld (hl),a
+        ld (lasso_prev+3),a
         ; paint the room into BOTH buffers (the visible top-to-bottom
         ; sweep is our flip-screen transition effect)
         ld a,SCREEN_B/256
@@ -1499,7 +1822,23 @@ next_level:
         jp nc,game_win          ; above the last level: the airlock
         ld (current_level),a
         call load_level
-        jp enter_level          ; X carries over; Y resets to the floor
+        ld a,176                ; in from below: emerge at the floor
+        ld (entry_y),a
+        jp enter_level          ; X carries over (the ladders line up)
+
+; ----------------------------------------------------------------------
+; prev_level -- climbed DOWN off the bottom: the ladders are continuous
+; between screens, so we drop into the level below at the top of its
+; exit ladder (same column -- that is the generator's alignment rule).
+; ----------------------------------------------------------------------
+prev_level:
+        ld a,(current_level)
+        dec a
+        ld (current_level),a
+        call load_level
+        ld a,8                  ; in from above: appear at the top,
+        ld (entry_y),a          ; still on the rails
+        jp enter_level
 
 game_win:                       ; reached the top of the shaft (for now:
         ld b,50                 ; a green flash, then back to the title)
@@ -1518,135 +1857,570 @@ gw_loop:
         out (c),a
         jp menu_screen
 
+; ======================================================================
+;
+;   THE ELEVATOR NETWORK
+;
+; Levels 1, 10, 20, 30, 40 and 50 have a lift door on their bottom
+; floor.  Stand at the door: Up rides to the next stop ABOVE that you
+; have already visited on foot, Down to the next below.  visited_stops
+; is a bitmask (bit per stop) marked on arrival at each stop level --
+; the lift only goes where the mechanic has already been.
+;
+; ======================================================================
+check_elevator:
+        ld a,(elevator_col)
+        inc a
+        ret z                   ; no lift on this level (#FF)
+        ld a,(player_state)
+        or a
+        ret nz                  ; must be standing...
+        ld a,(player_y)
+        cp 176
+        ret nz                  ; ...on the bottom floor...
+        ld a,(elevator_col)
+        ld b,a
+        ld a,(player_x)
+        sub b
+        inc a
+        cp 3                    ; ...right at the door (+/- 1 byte)
+        ret nc
+        ld a,(input_new)
+        bit INP_UP,a
+        jp nz,elevator_up
+        bit INP_DOWN,a
+        jp nz,elevator_down
+        ret
+
+elevator_up:                    ; next visited stop above this one
+        call elev_index
+eu_scan:
+        inc c
+        ld a,c
+        cp ELEV_COUNT
+        ret nc                  ; nothing visited above: door stays shut
+        call elev_visited
+        jr nc,eu_scan
+        jr elev_go
+elevator_down:                  ; next visited stop below
+        call elev_index
+ed_scan:
+        ld a,c
+        or a
+        ret z                   ; already at the bottom terminus
+        dec c
+        call elev_visited
+        jr nc,ed_scan
+elev_go:
+        ld hl,elev_stops
+        ld b,0
+        add hl,bc
+        ld a,(hl)
+        ld (current_level),a
+        ld a,SFX_PING           ; ding!
+        call sfx_start
+        ld a,(current_level)
+        call load_level
+        ld a,(elevator_col)     ; step out of the destination's door
+        ld (player_x),a
+        ld a,176
+        ld (entry_y),a
+        jp enter_level
+
+elev_index:                     ; C = index of current_level in the
+        ld hl,elev_stops        ; stop table (lifts only exist there)
+        ld c,0
+        ld a,(current_level)
+ei_loop:
+        cp (hl)
+        ret z
+        inc hl
+        inc c
+        jr ei_loop
+
+elev_visited:                   ; carry set if stop index C is visited
+        ld b,c                  ; A = 1 << C
+        inc b
+        xor a
+        scf
+ev_sh:
+        rla
+        djnz ev_sh
+        ld b,a
+        ld a,(visited_stops)
+        and b
+        jr z,ev_no
+        scf
+        ret
+ev_no:
+        or a
+        ret
+
 ; ----------------------------------------------------------------------
-; player_die -- drone contact.  Crash noise, red flash, respawn from a
-; fresh copy of the level -- or back to the menu when the lives run out.
+; take_fall_hit -- landed from more than one floor up.  A short wince
+; (brief red border, crash noise), one life gone, but play CONTINUES
+; where you landed -- unlike enemy contact, no respawn.
 ; ----------------------------------------------------------------------
-player_die:
+take_fall_hit:
+        xor a
+        ld (fall_hit),a
         ld a,SFX_HIT
         call sfx_start
-        ld b,35                 ; freeze ~0.7s
-pd_loop:
+        ld b,14                 ; a short wince, ~0.3s
+tfh_loop:
         push bc
         call frame_sync
         ld bc,GA_PORT+#10
         out (c),c
-        ld a,#4C                ; bright red border
+        ld a,#4C                ; red border while it stings
         out (c),a
-        call sfx_update         ; let the noise burst play out
+        call sfx_update
         pop bc
-        djnz pd_loop
+        djnz tfh_loop
         ld bc,GA_PORT+#10
         out (c),c
-        ld a,#54                ; border back to black
+        ld a,#54
         out (c),a
+        jp take_hit             ; one energy point, same as any blow
+
+; ----------------------------------------------------------------------
+; take_hit -- any contact damage funnels through here.  One energy
+; point behind a 3-second immunity flicker; at zero energy a life goes
+; and the tank refills; at zero lives, the shaft wins.
+; ----------------------------------------------------------------------
+take_hit:
+        ld a,(immune_timer)
+        or a
+        ret nz                  ; still untouchable: no harm done
+        ld a,IMMUNE_TIME
+        ld (immune_timer),a
+        ld a,SFX_HIT
+        call sfx_start
+        ld hl,player_energy
+        dec (hl)
+        ret nz                  ; bruised: play on where you stand
+        ld (hl),ENERGY_MAX      ; energy spent: that costs a life
         ld hl,game_lives
         dec (hl)
-        jp z,menu_screen        ; out of lives
-        ld a,(current_level)
-        call load_level         ; fresh map (doors shut, cards back)
-        ld a,(respawn_x)
-        ld (player_x),a
-        jp enter_level
+        ret nz
+        ld b,50                 ; out of lives: the long red goodbye
+go_loop:
+        push bc
+        call frame_sync
+        ld bc,GA_PORT+#10
+        out (c),c
+        ld a,#4C
+        out (c),a
+        call sfx_update
+        pop bc
+        djnz go_loop
+        ld bc,GA_PORT+#10
+        out (c),c
+        ld a,#54
+        out (c),a
+        jp menu_screen
 
 ; ======================================================================
 ;
-;   SECURITY DRONES -- Prompt 5
+;   THE PEOPLE OF THE SHAFT -- the entity system
 ;
-; Each drone is an 8-byte record (see the constants block): position,
-; a signed direction that doubles as the speed, patrol bounds and an
-; animation ticker.  They bounce between xmin and xmax forever, and
-; their rotor blades alternate between two sprite frames every 8
-; frames (bit 3 of the ticker).
+; One 10-byte record per entity (see the constants block).  Types:
+;   RIOT  patrols its walkway at half pace, shield up
+;   COAT  patrols at full pace, crowbar swinging
+;   THROW stands on the platform above and, on a personal timer,
+;         drops debris over the edge when the player is near
+;   PROJ  the falling debris: constant 3 lines/frame until it meets
+;         something solid (or the floor) and shatters
+;   DYING a two-frame ghost whose old images get erased from both
+;         buffers before the slot frees up (lasso kills, debris hits)
 ;
 ; ======================================================================
-update_drones:
-        ld ix,drones
-        ld b,MAX_DRONES
-ud_loop:
+update_entities:
+        ld ix,entities
+        ld b,MAX_ENTITIES
+ue_loop:
+        push bc
         ld a,(ix+0)
         or a
-        jr z,ud_next
-        inc (ix+7)              ; animation ticker (bit 3 picks the frame)
+        jp z,ue_next
+        inc (ix+7)              ; everyone animates
+        cp ET_RIOT
+        jr z,ue_riot
+        cp ET_COAT
+        jr z,ue_coat
+        cp ET_THROW
+        jr z,ue_thrower
+        cp ET_PROJ
+        jp z,ue_proj
+        cp ET_DRIP
+        jp z,ue_drip
+        dec (ix+8)              ; ET_DYING: fade out, free the slot
+        jp nz,ue_next
+        ld (ix+0),ET_NONE
+        jp ue_next
+ue_riot:
+        ld a,(ix+7)             ; riot gear is heavy: one step in four
+        and 3                   ; frames (a quarter of walking pace)
+        jp nz,ue_next
+        jr ue_patrol
+ue_coat:
+        ld a,(ix+7)             ; the coat men stride every other frame
+        and 1                   ; -- brisk, but you can outrun them
+        jp nz,ue_next
+ue_patrol:
         ld a,(ix+1)
-        add a,(ix+3)            ; x += dir  (dir is +/-speed)
+        add a,(ix+3)            ; x += dir (dir carries the speed)
         ld (ix+1),a
-        cp (ix+5)               ; reached the left end of the patrol?
-        jr c,ud_turn_r
-        jr z,ud_turn_r
-        cp (ix+6)               ; the right end?
-        jr nc,ud_turn_l
-        jr ud_next
-ud_turn_r:
+        cp (ix+5)               ; left end of the patrol?
+        jr c,ue_turn_r
+        jr z,ue_turn_r
+        cp (ix+6)               ; right end?
+        jr nc,ue_turn_l
+        jp ue_next
+ue_turn_r:
         ld a,(ix+5)
-        ld (ix+1),a             ; clamp to the bound...
+        ld (ix+1),a
         ld a,(ix+4)
-        ld (ix+3),a             ; ...and head right (+speed)
-        jr ud_next
-ud_turn_l:
+        ld (ix+3),a             ; about face: head right
+        jp ue_next
+ue_turn_l:
         ld a,(ix+6)
         ld (ix+1),a
         xor a
         sub (ix+4)
-        ld (ix+3),a             ; head left (-speed)
-ud_next:
-        ld de,8
+        ld (ix+3),a             ; head left
+        jp ue_next
+ue_thrower:
+        dec (ix+8)              ; wind-up timer
+        jr nz,ue_next
+        ld a,(ix+4)             ; rewind for the next throw
+        ld (ix+8),a
+        ld a,(player_x)         ; only throws when someone is below
+        sub (ix+1)              ; to hit (|dx| < 28 bytes)
+        jr nc,ue_th_dx
+        neg
+ue_th_dx:
+        cp 28
+        jr nc,ue_next
+        call spawn_projectile
+        jr ue_next
+ue_proj:
+        ld a,(ix+2)
+        add a,3                 ; falling debris: 3 lines/frame
+        ld (ix+2),a
+        cp 184
+        jr nc,ue_proj_die       ; the floor always stops it
+        push ix                 ; did it land on something solid?
+        ld b,(ix+1)
+        ld c,a
+        ld d,SPR_W_BYTES
+        ld e,8                  ; debris is 8 lines tall
+        call probe_level        ; (trashes IX)
+        pop ix
+        rra
+        jr nc,ue_next
+ue_proj_die:
+        ld (ix+0),ET_DYING
+        ld (ix+8),2
+        jp ue_next
+ue_drip:
+        ld a,(ix+2)
+        add a,2                 ; oil falls lazily, 2 lines/frame
+        ld (ix+2),a
+        cp 184
+        jr nc,ue_proj_die       ; splashes on the floor...
+        push ix
+        ld b,(ix+1)
+        ld c,a
+        ld d,SPR_W_BYTES
+        ld e,4
+        call probe_level        ; ...or on the first slab in the way
+        pop ix
+        rra
+        jr c,ue_proj_die
+ue_next:
+        pop bc
+        ld de,ENT_SIZE
         add ix,de
-        djnz ud_loop
+        dec b                   ; (djnz can't reach back this far)
+        jp nz,ue_loop
         ret
 
 ; ----------------------------------------------------------------------
-; check_drone_hit -- player box vs every active drone box.
-; Both boxes are 4 bytes x 16 lines, so AABB overlap reduces to
-; |dx| < 4 AND |dy| < 16.  Carry set = contact (the caller jumps to
-; player_die -- keeping the control flow in the game loop).
+; update_leaks -- each leaky ceiling pipe counts down its own timer
+; and lets a drop go; the drip is an ordinary pool entity from there.
 ; ----------------------------------------------------------------------
-check_drone_hit:
-        ld ix,drones
-        ld b,MAX_DRONES
-cdh_loop:
+update_leaks:
+        ld a,(leak_count)
+        or a
+        ret z
+        ld b,a
+        ld ix,leaks
+ul_loop:
+        dec (ix+4)
+        jr nz,ul_next
+        ld a,(ix+3)             ; rewind to this pipe's interval
+        ld (ix+4),a
+        call spawn_drip
+ul_next:
+        ld de,6
+        add ix,de
+        djnz ul_loop
+        ret
+spawn_drip:
+        push ix
+        push bc
+        ld iy,entities
+        ld b,MAX_ENTITIES
+sdr_loop:
+        ld a,(iy+0)
+        or a
+        jr z,sdr_found
+        ld de,ENT_SIZE
+        add iy,de
+        djnz sdr_loop
+        pop bc                  ; pool full: the pipe just glistens
+        pop ix
+        ret
+sdr_found:
+        ld (iy+0),ET_DRIP
+        ld a,(ix+0)
+        ld (iy+1),a             ; the pipe's column
+        ld a,(ix+1)
+        ld (iy+2),a             ; just below the pipe tile
+        ld a,(ix+2)
+        ld (iy+9),a             ; colour: 1 = lubricant, 0 = water
+        ld (iy+7),0
+        pop bc
+        pop ix
+        ret
+
+; ----------------------------------------------------------------------
+; spawn_projectile -- thrower at IX drops debris just below his own
+; platform's slab; it then falls onto the walkway underneath.
+; ----------------------------------------------------------------------
+spawn_projectile:
+        push ix
+        push bc
+        ld iy,entities          ; find a free slot in the pool
+        ld b,MAX_ENTITIES
+sp_loop:
+        ld a,(iy+0)
+        or a
+        jr z,sp_found
+        ld de,ENT_SIZE
+        add iy,de
+        djnz sp_loop
+        pop bc                  ; pool full: no throw this time
+        pop ix
+        ret
+sp_found:
+        ld (iy+0),ET_PROJ
+        ld a,(ix+1)
+        ld (iy+1),a             ; the thrower's column
+        ld a,(ix+2)
+        add a,24                ; clear of his slab, into the open air
+        ld (iy+2),a
+        ld (iy+7),0
+        pop bc
+        pop ix
+        ret
+
+; ----------------------------------------------------------------------
+; check_enemy_hit -- the player's (duck-aware) box vs every hostile.
+; Ducking/sliding empties the TOP half of the player box, so debris
+; and swings at head height pass clean over.  Carry set = contact.
+; ----------------------------------------------------------------------
+check_enemy_hit:
+        ld a,(immune_timer)     ; still flickering from the last hit?
+        or a
+        jr z,ceh_live
+        ret                     ; (or a cleared carry: untouchable)
+ceh_live:
+        ld a,(player_y)
+        ld d,a                  ; D = player box top...
+        add a,SPR_H_LINES
+        ld e,a                  ; E = bottom (exclusive; the feet stay)
+        ld a,(player_duck)
+        or a
+        jr z,ceh_box
+        ld a,d
+        add a,8                 ; ...raised by 8 when ducking
+        ld d,a
+ceh_box:
+        ld ix,entities
+        ld b,MAX_ENTITIES
+ceh_loop:
         ld a,(ix+0)
         or a
-        jr z,cdh_next
+        jr z,ceh_next
+        cp ET_DYING
+        jr z,ceh_next           ; the defeated can't hurt you
+        cp ET_DRIP
+        jr nz,ceh_solid
+        ld a,(ix+9)
+        or a
+        jr z,ceh_next           ; white drip: only oily water
+ceh_solid:
         ld a,(player_x)
         sub (ix+1)
-        jr nc,cdh_dx
-        neg                     ; |player_x - drone_x|
-cdh_dx:
-        cp SPR_W_BYTES
-        jr nc,cdh_next          ; too far apart horizontally
-        ld a,(player_y)
-        sub (ix+2)
-        jr nc,cdh_dy
+        jr nc,ceh_dx
         neg
-cdh_dy:
-        cp SPR_H_LINES
-        jr nc,cdh_next
-        scf                     ; boxes intersect: contact
+ceh_dx:
+        cp SPR_W_BYTES          ; |dx| >= 4: no horizontal overlap
+        jr nc,ceh_next
+        ld a,(ix+0)
+        cp ET_PROJ
+        jr z,ceh_short
+        cp ET_DRIP
+        jr z,ceh_short
+        ld a,SPR_H_LINES        ; people are full height...
+        jr ceh_h
+ceh_short:
+        ld a,8                  ; ...debris and drips are half
+ceh_h:
+        ld c,a
+        ld a,(ix+2)             ; enemy top vs player bottom
+        cp e
+        jr nc,ceh_next          ; enemy entirely below the feet
+        add a,c
+        dec a                   ; enemy's last occupied line
+        cp d
+        jr c,ceh_next           ; ends above the (ducked) head
+        scf                     ; contact
         ret
-cdh_next:
-        ld de,8
-        add ix,de
-        djnz cdh_loop
-        or a                    ; carry clear: safe
+ceh_next:
+        repeat ENT_SIZE
+        inc ix
+        rend
+        djnz ceh_loop
+        or a
+        ret
+
+; ----------------------------------------------------------------------
+; THE LASSO -- a mechanic's cable whip.  lasso_span works out how much
+; rope fits between the shoulder and the wall; lasso_hits snares any
+; PERSON whose body crosses the rope line (debris can't be lassoed).
+; ----------------------------------------------------------------------
+; Out: carry set, B = first rope byte, C = rope width in bytes;
+;      carry clear = jammed against the screen edge.
+lasso_span:
+        ld a,(player_facing)
+        or a
+        jr nz,lsp_left
+        ld a,(player_x)
+        add a,SPR_W_BYTES       ; from the right shoulder
+        ld b,a
+        ld a,SCR_W_BYTES
+        sub b                   ; room to the edge
+        jr lsp_clamp
+lsp_left:
+        ld a,(player_x)
+        sub LASSO_LEN
+        jr nc,lsp_l_ok
+        xor a                   ; clamp at the left wall
+lsp_l_ok:
+        ld b,a
+        ld a,(player_x)
+        sub b
+lsp_clamp:
+        or a
+        ret z                   ; no room at all (carry is clear)
+        cp LASSO_LEN
+        jr c,lsp_w
+        ld a,LASSO_LEN
+lsp_w:
+        ld c,a
+        scf
+        ret
+
+lasso_hits:
+        call lasso_span
+        ret nc
+        ld ix,entities
+        ld e,MAX_ENTITIES
+lh_loop:
+        ld a,(ix+0)
+        or a
+        jr z,lh_next
+        cp ET_PROJ
+        jr nc,lh_next           ; only people can be snared
+        ; vertical: does the body cross the rope line (py+6..py+7)?
+        ld a,(player_y)
+        add a,7
+        cp (ix+2)
+        jr c,lh_next            ; enemy hangs below the rope
+        ld a,(ix+2)
+        add a,SPR_H_LINES-1     ; enemy's last line
+        ld l,a
+        ld a,(player_y)
+        add a,6
+        cp l
+        jr z,lh_y_ok
+        jr nc,lh_next           ; enemy stands above the rope
+lh_y_ok:
+        ; horizontal: enemy [x, x+3] vs rope [B, B+C-1]
+        ld a,(ix+1)
+        add a,SPR_W_BYTES-1
+        cp b
+        jr c,lh_next            ; entirely left of the rope
+        ld a,b
+        add a,c
+        dec a
+        cp (ix+1)
+        jr c,lh_next            ; rope ends short of him
+        ld (ix+0),ET_DYING      ; snared!
+        ld (ix+8),2
+        ld a,SFX_PING
+        call sfx_start          ; (preserves DE and the rope in BC)
+lh_next:
+        repeat ENT_SIZE
+        inc ix
+        rend
+        dec e
+        jr nz,lh_loop
         ret
 
 ; ----------------------------------------------------------------------
 ; render_entities -- the per-frame draw pass, double-buffer aware:
-; restore the background under every OLD image in this buffer, then
-; draw everything anew (drones first, player on top).
+; restore the background under every OLD image in this buffer (player,
+; entities, last frame's rope), then draw everything anew.  DYING
+; entities get the restore but no draw -- that is how a lassoed enemy
+; or shattered debris vanishes cleanly from BOTH buffers.
 ; ----------------------------------------------------------------------
 render_entities:
         call erase_player
-        ld ix,drones
-        ld iy,drone_prev
-        ld b,MAX_DRONES
+        ; --- the rope from two frames ago in this buffer, if any
+        ld hl,lasso_prev        ; 3-byte slots {active,x,y} per buffer
+        ld a,(buf_index)
+        ld c,a
+        add a,a
+        add a,c
+        ld c,a
+        ld b,0
+        add hl,bc
+        ld a,(hl)
+        or a
+        jr z,re_no_rope
+        ld (hl),0               ; consumed
+        inc hl
+        ld b,(hl)
+        inc hl
+        ld c,(hl)
+        ld d,LASSO_LEN
+        ld e,2
+        call restore_area
+re_no_rope:
+        ; --- restore under every entity's old image
+        ld ix,entities
+        ld iy,entity_prev
+        ld b,MAX_ENTITIES
 re_erase:
         ld a,(ix+0)
         or a
         jr z,re_e_next
         push bc
-        ld a,(buf_index)        ; this buffer's slot: +0/+2 per drone
+        ld a,(buf_index)        ; this buffer's slot: +0/+2 per entity
         add a,a
         ld e,a
         ld d,0
@@ -1659,18 +2433,21 @@ re_erase:
         call restore_tiles      ; (leaves IX/IY alone)
         pop bc
 re_e_next:
-        ld de,8
+        ld de,ENT_SIZE
         add ix,de
         ld de,4
         add iy,de
         djnz re_erase
-        ld ix,drones
-        ld iy,drone_prev
-        ld b,MAX_DRONES
+        ; --- draw pass
+        ld ix,entities
+        ld iy,entity_prev
+        ld b,MAX_ENTITIES
 re_draw:
         ld a,(ix+0)
         or a
         jr z,re_d_next
+        cp ET_DYING
+        jr z,re_d_next          ; erased above, never drawn again
         push bc
         ld a,(buf_index)
         add a,a
@@ -1686,22 +2463,92 @@ re_draw:
         ld a,(ix+2)
         ld (hl),a
         ld c,a
-        ; the animation ticker's bit 3 swaps frames every 8 frames
-        ld de,spr_drone_a
-        ld a,(ix+7)
-        and 8
-        jr z,re_frame
-        ld de,spr_drone_b
-re_frame:
+        call entity_sprite      ; DE = the right frame for this type
         call draw_sprite_8x16
         pop bc
 re_d_next:
-        ld de,8
+        ld de,ENT_SIZE
         add ix,de
         ld de,4
         add iy,de
         djnz re_draw
-        jp draw_player          ; player last: always in front
+        call draw_player        ; player next-to-last: in front of foes
+        ; --- and the rope, while the whip is out
+        ld a,(lasso_timer)
+        cp LASSO_TIME-5
+        ret c                   ; recoiled: nothing to draw
+        call lasso_span
+        ret nc
+        ld d,c                  ; D = rope width (bytes)
+        ld a,(player_y)
+        add a,6                 ; rope rides at arm height
+        ld c,a
+        ld hl,lasso_prev        ; remember it for this buffer's restore
+        ld a,(buf_index)
+        ld e,a
+        add a,a
+        add a,e
+        ld e,a
+        push de
+        ld d,0
+        add hl,de
+        pop de
+        ld (hl),1
+        inc hl
+        ld (hl),b
+        inc hl
+        ld (hl),c
+        ld e,2                  ; 2 lines of rope
+        ld a,#FC                ; both Mode 0 pixels pen 7 (yellow)
+        jp fill_rect
+
+; entity_sprite -- DE = sprite frame for the entity at IX
+entity_sprite:
+        ld a,(ix+0)
+        cp ET_COAT
+        jr z,es_coat
+        jr c,es_riot            ; ET_RIOT
+        cp ET_PROJ
+        jr z,es_rock
+        cp ET_DRIP
+        jr z,es_drip
+        ; ET_THROW: arm up briefly after each throw
+        ld a,(ix+4)             ; interval - timer = frames since throw
+        sub (ix+8)
+        cp 16
+        ld de,spr_throw_b
+        ret c
+        ld de,spr_throw_a
+        ret
+es_rock:
+        ld de,spr_rock
+        ret
+es_drip:
+        ld de,spr_drip_red
+        ld a,(ix+9)
+        or a
+        ret nz
+        ld de,spr_drip_white
+        ret
+es_riot:
+        ld de,spr_riot_r        ; face the patrol direction
+        bit 7,(ix+3)
+        jr z,es_walk
+        ld de,spr_riot_l
+        jr es_walk
+es_coat:
+        ld de,spr_coat_r
+        bit 7,(ix+3)
+        jr z,es_walk
+        ld de,spr_coat_l
+es_walk:
+        ld a,(ix+7)
+        and 8                   ; stride: swap legs every 8 frames
+        ret z
+        ld hl,128               ; facing pair: frame B follows frame A
+        add hl,de
+        ex de,hl
+        ret
 
 ; ======================================================================
 ;
@@ -1739,7 +2586,7 @@ ck_row:
         inc d
         djnz ck_col
         ret
-ck_cell:                        ; if cell (D,E) is a keycard, take it
+ck_cell:                        ; keycards and medkits, by tile index
         ld a,d
         cp MAP_W
         ret nc
@@ -1748,12 +2595,49 @@ ck_cell:                        ; if cell (D,E) is a keycard, take it
         ret nc
         call map_cell_addr      ; (preserves D,E)
         ld a,(hl)
-        cp TILE_KEYCARD
+        cp TILE_KEY_BASE
+        jr c,ck_not_key
+        cp TILE_KEY_BASE+3
+        jr nc,ck_not_key
+        ; a keycard: its colour is its index
+        sub TILE_KEY_BASE
+        push hl
+        push de
+        ld e,a
+        ld d,0
+        ld hl,keys_held
+        add hl,de
+        inc (hl)
+        pop de
+        pop hl
+        jr ck_took
+ck_not_key:
+        cp TILE_MEDKIT
         ret nz
+        ; a medical crate: 1-4 energy, spill-over banks a life
+        push hl
+        ld a,(frame_ctr)
+        and 3
+        inc a                   ; 1..4 points, luck of the frame
+        ld hl,player_energy
+        add a,(hl)
+        cp ENERGY_MAX+1
+        jr c,ck_med_fits
+        sub ENERGY_MAX          ; over the top: one life banked
+        ld b,a
+        ld a,(game_lives)
+        cp 9                    ; (one HUD digit)
+        jr nc,ck_med_capped
+        inc a
+        ld (game_lives),a
+ck_med_capped:
+        ld a,b
+ck_med_fits:
+        ld (hl),a
+        pop hl
+ck_took:
         ld (hl),TILE_EMPTY      ; lift it out of the map RAM...
         call redraw_cell_both   ; ...and off both screen buffers
-        ld hl,keycards_held
-        inc (hl)
         ld a,SFX_PING
         jp sfx_start            ; (preserves D,E for the loop)
 
@@ -1764,9 +2648,6 @@ ck_cell:                        ; if cell (D,E) is a keycard, take it
 ; The walk itself goes through next frame -- the door is simply gone.
 ; ----------------------------------------------------------------------
 check_doors:
-        ld a,(keycards_held)
-        or a
-        ret z                   ; no card: the door stays shut
         ld a,(input_held)
         and INP_HORIZ_MASK
         ret z                   ; not pushing sideways
@@ -1809,7 +2690,19 @@ cdo_skip:
         rend
         jr cdo_find
 cdo_open:
-        ld hl,keycards_held
+        ld a,(ix+4)             ; the door's colour rides in bits 4-5
+        rrca
+        rrca
+        rrca
+        rrca
+        and 3
+        ld e,a
+        ld d,0
+        ld hl,keys_held
+        add hl,de
+        ld a,(hl)
+        or a
+        ret z                   ; no key of THIS colour: stays locked
         dec (hl)
         ld (ix+4),0             ; the rect will never match again
         ld a,SFX_PING
@@ -2019,17 +2912,76 @@ atg3:
 ; and both buffers stay correct without any dirty-tracking.
 ; ----------------------------------------------------------------------
 draw_hud:
-        ld a,(keycards_held)
-        and #0F                 ; one hex digit (glyph = value)
+        ld a,GLYPH_KEY          ; one key icon, three coloured counts
         ld b,0
         ld c,0
-        ld e,9                  ; keycard green
+        ld e,2                  ; neutral steel
+        call draw_char
+        ld a,(keys_held)
+        and #0F
+        ld b,4
+        ld c,0
+        ld e,9                  ; green
+        call draw_char
+        ld a,(keys_held+1)
+        and #0F
+        ld b,8
+        ld c,0
+        ld e,10                 ; cyan
+        call draw_char
+        ld a,(keys_held+2)
+        and #0F
+        ld b,12
+        ld c,0
+        ld e,7                  ; yellow
+        call draw_char
+        ; the level number, top centre, in decimal
+        ld a,(current_level)
+        ld c,0
+hud_tens:
+        cp 10
+        jr c,hud_tdone
+        sub 10
+        inc c
+        jr hud_tens
+hud_tdone:
+        push af                 ; A = ones digit
+        ld a,c
+        or a
+        ld a,GLYPH_SPACE        ; no leading zero on levels 1-9
+        jr z,hud_tblank
+        ld a,c
+hud_tblank:
+        ld b,36
+        ld c,0
+        ld e,1                  ; white
+        call draw_char
+        pop af
+        ld b,40
+        ld c,0
+        ld e,1
+        call draw_char
+        ld a,GLYPH_BOLT         ; energy...
+        ld b,56
+        ld c,0
+        ld e,7
+        call draw_char
+        ld a,(player_energy)
+        and #0F
+        ld b,60
+        ld c,0
+        ld e,7
+        call draw_char
+        ld a,GLYPH_HEART        ; ...and lives
+        ld b,SCR_W_BYTES-8
+        ld c,0
+        ld e,5
         call draw_char
         ld a,(game_lives)
         and #0F
         ld b,SCR_W_BYTES-4
         ld c,0
-        ld e,5                  ; alarm red
+        ld e,5
         jp draw_char
 
 ; ======================================================================
@@ -2073,11 +3025,19 @@ ms_blink:
         ld a,START_LIVES
         ld (game_lives),a
         xor a
-        ld (keycards_held),a
+        ld (keys_held),a
+        ld (keys_held+1),a
+        ld (keys_held+2),a
+        ld (visited_stops),a    ; the lift knows nothing yet
+        ld (immune_timer),a
+        ld a,ENERGY_MAX
+        ld (player_energy),a
         ld a,1
         ld (current_level),a
         ld a,38                 ; the mechanic's post, mid-deck
         ld (player_x),a
+        ld a,176
+        ld (entry_y),a
         ld a,1
         call load_level
         jp enter_level
@@ -2101,11 +3061,11 @@ draw_menu_page:                 ; backdrop + text + diorama, one buffer
         call draw_text
         ld b,36                 ; the mechanic, on the crate stack
         ld c,128
-        ld de,spr_mechanic
+        ld de,spr_mech_r
         call draw_sprite_8x16
-        ld b,56                 ; a drone hovering watchfully
-        ld c,88
-        ld de,spr_drone_a
+        ld b,56                 ; a riot guard watching from the dark,
+        ld c,88                 ; facing our hero
+        ld de,spr_riot_l
         jp draw_sprite_8x16
 
 ; ======================================================================
@@ -2167,12 +3127,14 @@ sfx_update:                     ; call once per frame
         ret z                   ; silent, and already shut down
         dec a
         ld (sfx_timer),a
-        jr z,sfx_silence        ; just expired: close the channel
+        jp z,sfx_silence        ; just expired: close the channel
         ld a,(sfx_type)
         dec a
         jr z,sfx_upd_jump
         dec a
         jr z,sfx_upd_hit
+        dec a
+        jr nz,sfx_upd_whip
         ; ---- PING: high steady tone (period 40 ~= 1.5kHz), fast fade
         xor a
         ld e,40
@@ -2222,6 +3184,31 @@ sfx_upd_hit:
         ld e,a
         ld a,8
         jp psg_write
+sfx_upd_whip:
+        ; ---- WHIP: the lasso crack -- pitch plunging fast (period
+        ; grows 62..190 over 6 frames)
+        ld a,(sfx_timer)
+        ld e,a
+        ld a,7
+        sub e                   ; 1..6 as the crack unwinds
+        add a,a
+        add a,a
+        add a,a
+        add a,a
+        add a,a                 ; x32
+        add a,30
+        ld e,a
+        xor a
+        call psg_write          ; R0
+        ld a,1
+        ld e,0
+        call psg_write          ; R1
+        ld a,7
+        ld e,%00111110          ; tone A only
+        call psg_write
+        ld a,8
+        ld e,10
+        jp psg_write
 sfx_silence:
         ld a,8
         ld e,0
@@ -2231,17 +3218,17 @@ sfx_silence:
         jp psg_write
 
 sfx_len_tab:
-        defb 12,24,8            ; frames: JUMP, HIT, PING
+        defb 12,24,8,6          ; frames: JUMP, HIT, PING, WHIP
 
 ; ======================================================================
 ; set_palette -- program all 16 inks + border via the Gate Array
 ;
+; In: HL -> 16 colour values (one of the zone_palettes).
 ; GA commands on port #7Fxx: %00nnnnnn selects pen n (or #10 = border),
-; %01cccccc sets that pen to hardware colour c.  The values in
-; palette_data below already include the %01 command bits.
+; %01cccccc sets that pen to hardware colour c.  The palette values
+; already include the %01 command bits.
 ; ======================================================================
 set_palette:
-        ld hl,palette_data
         ld b,GA_PORT/256        ; B = #7F
         xor a                   ; pen 0
 sp_pen:
@@ -2297,43 +3284,29 @@ int_stub_end:
 ; DATA
 ; ======================================================================
 
-; ----------------------------------------------------------------------
-; Palette -- 16 Gate Array hardware colours (%01 command bits included)
-; A grimy industrial set for the bottom of the shaft.
-; ----------------------------------------------------------------------
-palette_data:
-        defb #54    ; pen 0 : black          - background, darkness
-        defb #4B    ; pen 1 : bright white   - highlights, text
-        defb #40    ; pen 2 : grey/white     - steel platforms, boots
-        defb #44    ; pen 3 : blue           - worker overalls, shadow steel
-        defb #57    ; pen 4 : sky blue       - cold industrial light
-        defb #4C    ; pen 5 : bright red     - hazard lights, alarms
-        defb #4E    ; pen 6 : orange         - rust, warning stripes
-        defb #4A    ; pen 7 : bright yellow  - lamps, hard hats
-        defb #47    ; pen 8 : pink           - skin
-        defb #52    ; pen 9 : bright green   - terminals, keycard A
-        defb #53    ; pen 10: bright cyan    - steam, glass
-        defb #45    ; pen 11: purple         - elite insignia (top levels)
-        defb #5C    ; pen 12: red            - dried warning paint
-        defb #56    ; pen 13: green          - corroded copper
-        defb #5E    ; pen 14: yellow         - sodium-light falloff
-        defb #5F    ; pen 15: pastel blue    - distant metalwork
+; (Palettes now live in the generated file: zone_palettes, one 16-
+; colour set per zone.  Pens 0-3,5,7,8 are shared -- player and UI --
+; the rest recolour ladders, crates and deco per zone.)
 
 ; ----------------------------------------------------------------------
-; Player sprite -- "the mechanic", 8x16 px, masked
-; Generated by tools/sprite_gen.py (edit the ASCII art there, re-run,
-; paste).  Pens: 7=hard hat  8=skin  3=overalls  2=boots
+; Sprites, all 8x16 masked, generated by tools/sprite_gen.py.
+; Walkers come in facing pairs: base label = frame A (right after
+; it, +128 bytes, frame B of the same facing).  _r looks right,
+; _l is the tool-mirrored copy.  The mechanic: hard hat, face and
+; forward hand toward travel; legs apart / together walk cycle.
+; Riot guard: visor and shield on the facing side.  Coat man:
+; crowbar carried forward, raised in frame B.
 ; ----------------------------------------------------------------------
-spr_mechanic:   ; 8x16 px = 4 bytes x 16 lines, (mask,data) interleaved
+spr_mech_r:
         defb #FF,#00, #00,#FC, #00,#FC, #FF,#00   ; ..7777..
         defb #AA,#54, #00,#FC, #00,#FC, #55,#A8   ; .777777.
-        defb #AA,#54, #00,#03, #00,#03, #55,#A8   ; .788887.
-        defb #AA,#54, #00,#03, #00,#03, #55,#A8   ; .788887.
+        defb #AA,#54, #00,#FC, #00,#03, #55,#02   ; .777888.
+        defb #AA,#54, #00,#FC, #00,#03, #55,#02   ; .777888.
         defb #FF,#00, #00,#03, #00,#03, #FF,#00   ; ..8888..
         defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
         defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #00,#46, #00,#CC, #00,#CC, #00,#89   ; 83333338
-        defb #00,#46, #00,#CC, #00,#CC, #00,#89   ; 83333338
+        defb #AA,#44, #00,#CC, #00,#CC, #00,#89   ; .3333338
+        defb #AA,#44, #00,#CC, #00,#CC, #00,#89   ; .3333338
         defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
         defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
         defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
@@ -2341,41 +3314,329 @@ spr_mechanic:   ; 8x16 px = 4 bytes x 16 lines, (mask,data) interleaved
         defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
         defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
         defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
-
-; ----------------------------------------------------------------------
-; Security drone, two frames -- the rotor spins and the eye scans.
-; Generated by tools/sprite_gen.py.  Pens: 2 rotor, 10 shell, 5 eye.
-; ----------------------------------------------------------------------
-spr_drone_a:
-        defb #55,#08, #AA,#04, #55,#08, #AA,#04   ; 2..22..2
+spr_mech_r_b:
+        defb #FF,#00, #00,#FC, #00,#FC, #FF,#00   ; ..7777..
+        defb #AA,#54, #00,#FC, #00,#FC, #55,#A8   ; .777777.
+        defb #AA,#54, #00,#FC, #00,#03, #55,#02   ; .777888.
+        defb #AA,#54, #00,#FC, #00,#03, #55,#02   ; .777888.
+        defb #FF,#00, #00,#03, #00,#03, #FF,#00   ; ..8888..
+        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #00,#89   ; .3333338
+        defb #AA,#44, #00,#CC, #00,#CC, #00,#89   ; .3333338
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
+        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
+        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
+        defb #FF,#00, #00,#0C, #00,#0C, #FF,#00   ; ..2222..
+        defb #FF,#00, #00,#0C, #00,#0C, #FF,#00   ; ..2222..
+spr_mech_l:
+        defb #FF,#00, #00,#FC, #00,#FC, #FF,#00   ; ..7777..
+        defb #AA,#54, #00,#FC, #00,#FC, #55,#A8   ; .777777.
+        defb #AA,#01, #00,#03, #00,#FC, #55,#A8   ; .888777.
+        defb #AA,#01, #00,#03, #00,#FC, #55,#A8   ; .888777.
+        defb #FF,#00, #00,#03, #00,#03, #FF,#00   ; ..8888..
+        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #00,#46, #00,#CC, #00,#CC, #55,#88   ; 8333333.
+        defb #00,#46, #00,#CC, #00,#CC, #55,#88   ; 8333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
+        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
+        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
+spr_mech_l_b:
+        defb #FF,#00, #00,#FC, #00,#FC, #FF,#00   ; ..7777..
+        defb #AA,#54, #00,#FC, #00,#FC, #55,#A8   ; .777777.
+        defb #AA,#01, #00,#03, #00,#FC, #55,#A8   ; .888777.
+        defb #AA,#01, #00,#03, #00,#FC, #55,#A8   ; .888777.
+        defb #FF,#00, #00,#03, #00,#03, #FF,#00   ; ..8888..
+        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #00,#46, #00,#CC, #00,#CC, #55,#88   ; 8333333.
+        defb #00,#46, #00,#CC, #00,#CC, #55,#88   ; 8333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
+        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
+        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
+        defb #FF,#00, #00,#0C, #00,#0C, #FF,#00   ; ..2222..
+        defb #FF,#00, #00,#0C, #00,#0C, #FF,#00   ; ..2222..
+; Climbing, seen from behind (looking at the ladder): hands swap
+; high/low as the legs alternate with height.
+spr_mech_climb:
+        defb #55,#02, #00,#FC, #00,#FC, #FF,#00   ; 8.7777..
+        defb #AA,#54, #00,#FC, #00,#FC, #55,#A8   ; .777777.
+        defb #AA,#54, #00,#FC, #00,#FC, #AA,#01   ; .77777.8
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
+        defb #FF,#00, #00,#CC, #AA,#44, #55,#88   ; ..33.33.
+        defb #FF,#00, #00,#CC, #AA,#44, #55,#88   ; ..33.33.
+        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+spr_mech_climb_b:
+        defb #FF,#00, #00,#FC, #00,#FC, #AA,#01   ; ..7777.8
+        defb #AA,#54, #00,#FC, #00,#FC, #55,#A8   ; .777777.
+        defb #55,#02, #00,#FC, #00,#FC, #55,#A8   ; 8.77777.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
+        defb #AA,#44, #55,#88, #00,#CC, #FF,#00   ; .33.33..
+        defb #AA,#44, #55,#88, #00,#CC, #FF,#00   ; .33.33..
+        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+spr_mech_duck:
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #00,#FC, #00,#FC, #FF,#00   ; ..7777..
+        defb #AA,#54, #00,#FC, #00,#FC, #55,#A8   ; .777777.
+        defb #AA,#54, #00,#03, #00,#03, #55,#A8   ; .788887.
+        defb #AA,#54, #00,#CC, #00,#CC, #55,#A8   ; .733337.
+        defb #00,#CC, #00,#CC, #00,#CC, #00,#CC   ; 33333333
+        defb #00,#CC, #00,#CC, #00,#CC, #00,#CC   ; 33333333
+        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
+        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
+spr_riot_r:
+        defb #FF,#00, #00,#0C, #00,#0C, #FF,#00   ; ..2222..
         defb #AA,#04, #00,#0C, #00,#0C, #55,#08   ; .222222.
-        defb #FF,#00, #AA,#04, #55,#08, #FF,#00   ; ...22...
-        defb #FF,#00, #00,#0F, #00,#0F, #FF,#00   ; ..aaaa..
-        defb #AA,#05, #00,#0F, #00,#0F, #55,#0A   ; .aaaaaa.
-        defb #AA,#05, #00,#F0, #00,#F0, #55,#0A   ; .a5555a.
-        defb #AA,#05, #00,#0F, #00,#0F, #55,#0A   ; .aaaaaa.
-        defb #AA,#05, #00,#0F, #00,#0F, #55,#0A   ; .aaaaaa.
-        defb #FF,#00, #00,#0F, #00,#0F, #FF,#00   ; ..aaaa..
-        defb #FF,#00, #AA,#05, #55,#0A, #FF,#00   ; ...aa...
-        defb #FF,#00, #55,#08, #AA,#04, #FF,#00   ; ..2..2..
-        defb #AA,#04, #FF,#00, #FF,#00, #55,#08   ; .2....2.
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-spr_drone_b:
+        defb #AA,#04, #00,#48, #00,#C0, #55,#80   ; .221111.
+        defb #AA,#04, #00,#0C, #00,#0C, #55,#08   ; .222222.
+        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
+        defb #AA,#44, #00,#CC, #00,#8C, #55,#08   ; .333322.
+        defb #00,#CC, #00,#CC, #00,#CC, #00,#0C   ; 33333322
+        defb #00,#CC, #00,#CC, #00,#CC, #00,#0C   ; 33333322
+        defb #AA,#44, #00,#CC, #00,#8C, #55,#08   ; .333322.
+        defb #AA,#44, #55,#88, #00,#8C, #55,#08   ; .33.322.
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
         defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
-        defb #00,#0C, #00,#0C, #00,#0C, #00,#0C   ; 22222222
-        defb #FF,#00, #AA,#04, #55,#08, #FF,#00   ; ...22...
-        defb #FF,#00, #00,#0F, #00,#0F, #FF,#00   ; ..aaaa..
-        defb #AA,#05, #00,#0F, #00,#0F, #55,#0A   ; .aaaaaa.
-        defb #AA,#05, #00,#E0, #00,#D0, #55,#0A   ; .a5115a.
-        defb #AA,#05, #00,#0F, #00,#0F, #55,#0A   ; .aaaaaa.
-        defb #AA,#05, #00,#0F, #00,#0F, #55,#0A   ; .aaaaaa.
-        defb #FF,#00, #00,#0F, #00,#0F, #FF,#00   ; ..aaaa..
-        defb #FF,#00, #AA,#05, #55,#0A, #FF,#00   ; ...aa...
-        defb #FF,#00, #55,#08, #AA,#04, #FF,#00   ; ..2..2..
-        defb #AA,#04, #FF,#00, #FF,#00, #55,#08   ; .2....2.
+        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+spr_riot_r_b:
+        defb #FF,#00, #00,#0C, #00,#0C, #FF,#00   ; ..2222..
+        defb #AA,#04, #00,#0C, #00,#0C, #55,#08   ; .222222.
+        defb #AA,#04, #00,#48, #00,#C0, #55,#80   ; .221111.
+        defb #AA,#04, #00,#0C, #00,#0C, #55,#08   ; .222222.
+        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
+        defb #AA,#44, #00,#CC, #00,#8C, #55,#08   ; .333322.
+        defb #00,#CC, #00,#CC, #00,#CC, #00,#0C   ; 33333322
+        defb #00,#CC, #00,#CC, #00,#CC, #00,#0C   ; 33333322
+        defb #AA,#44, #00,#CC, #00,#8C, #55,#08   ; .333322.
+        defb #AA,#44, #55,#88, #00,#8C, #55,#08   ; .33.322.
+        defb #FF,#00, #00,#CC, #AA,#44, #55,#88   ; ..33.33.
+        defb #FF,#00, #00,#CC, #AA,#44, #55,#88   ; ..33.33.
+        defb #FF,#00, #00,#CC, #AA,#44, #55,#88   ; ..33.33.
+        defb #FF,#00, #00,#0C, #AA,#04, #55,#08   ; ..22.22.
+        defb #FF,#00, #00,#0C, #AA,#04, #55,#08   ; ..22.22.
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+spr_riot_l:
+        defb #FF,#00, #00,#0C, #00,#0C, #FF,#00   ; ..2222..
+        defb #AA,#04, #00,#0C, #00,#0C, #55,#08   ; .222222.
+        defb #AA,#40, #00,#C0, #00,#84, #55,#08   ; .111122.
+        defb #AA,#04, #00,#0C, #00,#0C, #55,#08   ; .222222.
+        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
+        defb #AA,#04, #00,#4C, #00,#CC, #55,#88   ; .223333.
+        defb #00,#0C, #00,#CC, #00,#CC, #00,#CC   ; 22333333
+        defb #00,#0C, #00,#CC, #00,#CC, #00,#CC   ; 22333333
+        defb #AA,#04, #00,#4C, #00,#CC, #55,#88   ; .223333.
+        defb #AA,#04, #00,#4C, #AA,#44, #55,#88   ; .223.33.
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
+        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
+        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+spr_riot_l_b:
+        defb #FF,#00, #00,#0C, #00,#0C, #FF,#00   ; ..2222..
+        defb #AA,#04, #00,#0C, #00,#0C, #55,#08   ; .222222.
+        defb #AA,#40, #00,#C0, #00,#84, #55,#08   ; .111122.
+        defb #AA,#04, #00,#0C, #00,#0C, #55,#08   ; .222222.
+        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
+        defb #AA,#04, #00,#4C, #00,#CC, #55,#88   ; .223333.
+        defb #00,#0C, #00,#CC, #00,#CC, #00,#CC   ; 22333333
+        defb #00,#0C, #00,#CC, #00,#CC, #00,#CC   ; 22333333
+        defb #AA,#04, #00,#4C, #00,#CC, #55,#88   ; .223333.
+        defb #AA,#04, #00,#4C, #AA,#44, #55,#88   ; .223.33.
+        defb #AA,#44, #55,#88, #00,#CC, #FF,#00   ; .33.33..
+        defb #AA,#44, #55,#88, #00,#CC, #FF,#00   ; .33.33..
+        defb #AA,#44, #55,#88, #00,#CC, #FF,#00   ; .33.33..
+        defb #AA,#04, #55,#08, #00,#0C, #FF,#00   ; .22.22..
+        defb #AA,#04, #55,#08, #00,#0C, #FF,#00   ; .22.22..
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+spr_coat_r:
+        defb #FF,#00, #00,#03, #00,#03, #FF,#00   ; ..8888..
+        defb #FF,#00, #00,#03, #00,#03, #FF,#00   ; ..8888..
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #00,#D8   ; .3333335
+        defb #AA,#44, #00,#CC, #00,#CC, #00,#F0   ; .3333355
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #55,#88, #00,#CC, #55,#88   ; .33.333.
+        defb #AA,#44, #55,#88, #00,#CC, #55,#88   ; .33.333.
+        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+spr_coat_r_b:
+        defb #FF,#00, #00,#03, #00,#03, #AA,#50   ; ..8888.5
+        defb #FF,#00, #00,#03, #00,#03, #55,#A0   ; ..88885.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
+        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
+        defb #FF,#00, #00,#0C, #00,#0C, #FF,#00   ; ..2222..
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+spr_coat_l:
+        defb #FF,#00, #00,#03, #00,#03, #FF,#00   ; ..8888..
+        defb #FF,#00, #00,#03, #00,#03, #FF,#00   ; ..8888..
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #00,#E4, #00,#CC, #00,#CC, #55,#88   ; 5333333.
+        defb #00,#F0, #00,#CC, #00,#CC, #55,#88   ; 5533333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #AA,#44, #55,#88   ; .333.33.
+        defb #AA,#44, #00,#CC, #AA,#44, #55,#88   ; .333.33.
+        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+spr_coat_l_b:
+        defb #55,#A0, #00,#03, #00,#03, #FF,#00   ; 5.8888..
+        defb #AA,#50, #00,#03, #00,#03, #FF,#00   ; .58888..
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
+        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
+        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
+        defb #FF,#00, #00,#0C, #00,#0C, #FF,#00   ; ..2222..
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+spr_throw_a:
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #00,#03, #00,#03, #FF,#00   ; ..8888..
+        defb #FF,#00, #00,#03, #00,#03, #FF,#00   ; ..8888..
+        defb #AA,#51, #00,#F3, #00,#F3, #55,#A2   ; .dddddd.
+        defb #AA,#51, #00,#F3, #00,#F3, #55,#A2   ; .dddddd.
+        defb #AA,#51, #00,#F3, #00,#F3, #55,#A2   ; .dddddd.
+        defb #AA,#51, #00,#F3, #00,#F3, #55,#A2   ; .dddddd.
+        defb #FF,#00, #00,#F3, #00,#F3, #FF,#00   ; ..dddd..
+        defb #FF,#00, #00,#F3, #00,#F3, #FF,#00   ; ..dddd..
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
+        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
+        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+spr_throw_b:
+        defb #FF,#00, #00,#3C, #FF,#00, #FF,#00   ; ..66....
+        defb #AA,#01, #FF,#00, #FF,#00, #55,#02   ; .8....8.
+        defb #AA,#01, #00,#03, #00,#03, #55,#02   ; .888888.
+        defb #AA,#51, #00,#F3, #00,#F3, #55,#A2   ; .dddddd.
+        defb #AA,#51, #00,#F3, #00,#F3, #55,#A2   ; .dddddd.
+        defb #AA,#51, #00,#F3, #00,#F3, #55,#A2   ; .dddddd.
+        defb #AA,#51, #00,#F3, #00,#F3, #55,#A2   ; .dddddd.
+        defb #FF,#00, #00,#F3, #00,#F3, #FF,#00   ; ..dddd..
+        defb #FF,#00, #00,#F3, #00,#F3, #FF,#00   ; ..dddd..
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
+        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
+        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
+        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+spr_rock:
+        defb #FF,#00, #00,#3C, #FF,#00, #FF,#00   ; ..66....
+        defb #AA,#14, #00,#3C, #55,#28, #FF,#00   ; .6666...
+        defb #AA,#14, #00,#3C, #00,#3C, #FF,#00   ; .66666..
+        defb #AA,#14, #00,#3C, #55,#28, #FF,#00   ; .6666...
+        defb #FF,#00, #00,#3C, #FF,#00, #FF,#00   ; ..66....
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+
+; Lubricant drips: red bites, white is only oily water.
+spr_drip_red:
+        defb #FF,#00, #AA,#50, #FF,#00, #FF,#00   ; ...5....
+        defb #FF,#00, #AA,#50, #55,#A0, #FF,#00   ; ...55...
+        defb #FF,#00, #AA,#50, #55,#A0, #FF,#00   ; ...55...
+        defb #FF,#00, #FF,#00, #55,#A0, #FF,#00   ; ....5...
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+spr_drip_white:
+        defb #FF,#00, #AA,#40, #FF,#00, #FF,#00   ; ...1....
+        defb #FF,#00, #AA,#40, #55,#80, #FF,#00   ; ...11...
+        defb #FF,#00, #AA,#40, #55,#80, #FF,#00   ; ...11...
+        defb #FF,#00, #FF,#00, #55,#80, #FF,#00   ; ....1...
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
+        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
         defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
         defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
         defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
@@ -2444,17 +3705,39 @@ last_fall:      defb 0          ; lines dropped on the last landing
 
 frame_ctr:      defb 0          ; ++ every game/menu frame (blink, anim)
 game_lives:     defb START_LIVES
-keycards_held:  defb 0
+keys_held:      defs 3,0        ; green, cyan, yellow keycards
+player_energy:  defb ENERGY_MAX
+immune_timer:   defb 0          ; post-hit invulnerability flicker
 current_level:  defb 1
 respawn_x:      defb 38         ; where this level was entered
 sfx_type:       defb 0          ; active sound effect (0 = none)
 sfx_timer:      defb 0          ; frames left on it
 
-drones:         defs MAX_DRONES*8,0   ; runtime entity records
-drone_prev:     defs MAX_DRONES*4,0   ; per drone: (x,y) x 2 buffers
+player_facing:  defb 0          ; 0 = right, 1 = left (lasso, slide)
+player_duck:    defb 0          ; low profile this frame (duck/slide)
+player_moved:   defb 0          ; walked/slid this frame (walk anim)
+fall_hit:       defb 0          ; landed hard: the loop collects a life
+entry_y:        defb 176        ; where the next enter_level places us
+respawn_y:      defb 176        ; entry point of this level (respawn)
+elevator_col:   defb #FF        ; lift door x on this level (#FF none)
+visited_stops:  defb 0          ; bitmask of lift stops reached on foot
+slide_timer:    defb 0          ; frames of slide burst left
+slide_lock:     defb 0          ; one slide per Down press
+lasso_timer:    defb 0          ; whip out + recoil countdown
+lasso_prev:     defs 6,0        ; per buffer: {active,x,y} rope image
+ra_c0:          defb 0          ; restore_area's cell window scratch
+ra_c1:          defb 0
+ra_r0:          defb 0
+ra_r1:          defb 0
 
-; The live copy of the current level, fetched from bank 4.  Map +
-; rects + drone spawns; WRITABLE (keycards/doors edit it) and big
+leak_count:     defb 0
+leaks:          defs MAX_LEAKS*6,0    ; x,y,colour,interval,timer,pad
+
+entities:       defs MAX_ENTITIES*ENT_SIZE,0  ; the runtime pool
+entity_prev:    defs MAX_ENTITIES*4,0         ; (x,y) x 2 buffers each
+
+; The live copy of the current level, fetched from its bank.  Map +
+; rects + enemy spawns; WRITABLE (keycards/doors edit it) and big
 ; enough for the largest level with room to grow.
 level_buffer:   defs 768,0
 prev_pos:       defb 38,176     ; where the player was drawn in buffer B
