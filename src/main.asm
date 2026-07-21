@@ -1085,42 +1085,48 @@ draw_sprite_8x16:
         push de
         call screen_addr        ; HL = top-left byte on screen
         pop de
+        ; --- the fast path: SP walks the sprite data, so one POP
+        ; fetches a whole (mask,data) pair in 10 T-states.  Interrupts
+        ; must be off while SP is hijacked (an IRQ would push into the
+        ; sprite!), and nothing below may PUSH.  38 T/byte vs 54.
+        di
+        ld (dss_res+1),sp       ; self-modifying SP save (all-RAM CPC)
+        ex de,hl
+        ld sp,hl                ; SP -> sprite (mask,data) pairs
+        ex de,hl                ; HL -> screen again
         ld c,SPR_H_LINES        ; 16 rows
-ds_row:
-        push hl                 ; keep the row's start address
-        repeat 4                ; ---- one screen byte, unrolled x4 ----
-        ld a,(de)               ; mask
-        and (hl)                ; keep background where mask=1
-        ld b,a
-        inc de
-        ld a,(de)               ; pixel data
-        or b                    ; merge sprite pixels in
+dss_row:
+        repeat 4                ; ---- one row, unrolled ----
+        pop de                  ; E = mask, D = data (little-endian)
+        ld a,e
+        and (hl)                ; background survives where mask=1
+        or d                    ; sprite pixels land where it is 0
         ld (hl),a
-        inc de
         inc hl
-        rend                    ; --------------------------------------
-        pop hl
-
-        ; ---- step HL to the next scanline ----
-        ; +#800 moves down one line inside an 8-line character row.
-        ; If that wrapped the line bits (H bits 3-5) to zero we fell
-        ; off the row: add #C050 (= -#4000 + #50) to land on the first
-        ; line of the next 80-byte character row.  Works for both
-        ; buffer bases because they are 16K-aligned.
+        rend
+        ; ---- next scanline: +#800 minus the 4 bytes we advanced.
+        ; The character-row wrap test is unchanged: the line bits of H
+        ; still advance by exactly one.
+        ld a,l
+        add a,#FC
+        ld l,a
         ld a,h
-        add a,8
+        adc a,#07
         ld h,a
         and #38
-        jr nz,ds_same_row
+        jr nz,dss_same
         ld a,l
         add a,#50
         ld l,a
         ld a,h
         adc a,#C0
         ld h,a
-ds_same_row:
+dss_same:
         dec c
-        jr nz,ds_row
+        jr nz,dss_row
+dss_res:
+        ld sp,0                 ; (patched) give the real stack back
+        ei
         ret
 
 ; ======================================================================
@@ -1461,9 +1467,12 @@ restore_tiles:
 ; ----------------------------------------------------------------------
 ; restore_area -- re-blit every map cell covering an arbitrary
 ; rectangle: B=x (bytes), C=y (lines), D=w (bytes), E=h (lines).
-; Used for sprites (4x16), the lasso rope (8x2), anything.
-; draw_map_tile clips cells that fall off the map, so callers can be
-; sloppy about edges.
+;
+; THE hot path of the frame (every sprite pays it), so no per-cell
+; address maths: the map pointer and the screen pointer are computed
+; ONCE for the top-left cell and then STEPPED -- map +20 a row and +1
+; a column, screen +80 a row (character rows are linear at line 0)
+; and +4 a column.  draw_tile does the pixel work.
 ; ----------------------------------------------------------------------
 restore_area:
         ld a,b
@@ -1475,30 +1484,80 @@ restore_area:
         dec a
         srl a
         srl a
-        ld (ra_c1),a            ; last tile column
+        cp MAP_W                ; clip the window to the map
+        jr c,ra_cw
+        ld a,MAP_W-1
+ra_cw:
+        ld (ra_c1),a
         ld a,c
         srl a
         srl a
         srl a
-        ld (ra_r0),a            ; first tile row
+        ld (ra_r0),a
         ld a,c
         add a,e
         dec a
         srl a
         srl a
         srl a
-        ld (ra_r1),a            ; last tile row
+        cp MAP_H
+        jr c,ra_rw
+        ld a,MAP_H-1
+ra_rw:
+        ld (ra_r1),a
+        ; --- top-left cell: map pointer and screen pointer, once
         ld a,(ra_c0)
         ld d,a
-ra_col:
         ld a,(ra_r0)
         ld e,a
+        call map_cell_addr      ; HL -> map[r0][c0]  (trashes BC)
+        ld (ra_map),hl
+        ld a,(ra_c0)
+        add a,a
+        add a,a
+        ld b,a                  ; x byte = col*4
+        ld a,(ra_r0)
+        add a,a
+        add a,a
+        add a,a
+        ld c,a                  ; line = row*8
+        call screen_addr        ; HL = screen top-left (line 0 of row)
+        ld (ra_scr),hl
+        ld a,(ra_c0)
+        ld d,a                  ; D = walking column
+ra_col:
+        ld a,(ra_r0)
+        ld e,a                  ; E = walking row
+        ld hl,(ra_map)
+        ld (ra_mp),hl
+        ld hl,(ra_scr)
+        ld (ra_sp),hl
 ra_row:
-        call draw_map_tile      ; preserves D,E; clips off-map cells
+        ld hl,(ra_mp)
+        ld a,(hl)               ; the tile index under this cell
+        push de
+        ld de,(ra_sp)
+        call draw_tile          ; (trashes A,BC,DE,HL)
+        pop de
+        ld hl,(ra_mp)           ; step one map row down...
+        ld bc,MAP_W
+        add hl,bc
+        ld (ra_mp),hl
+        ld hl,(ra_sp)           ; ...and one character row down
+        ld bc,80
+        add hl,bc
+        ld (ra_sp),hl
         inc e
         ld a,(ra_r1)
         cp e
         jr nc,ra_row
+        ld hl,(ra_map)          ; next column: map +1, screen +4
+        inc hl
+        ld (ra_map),hl
+        ld hl,(ra_scr)
+        ld bc,4
+        add hl,bc
+        ld (ra_scr),hl
         inc d
         ld a,(ra_c1)
         cp d
@@ -2597,7 +2656,7 @@ ck_cell:                        ; keycards and medkits, by tile index
         ld a,(hl)
         cp TILE_KEY_BASE
         jr c,ck_not_key
-        cp TILE_KEY_BASE+3
+        cp TILE_KEY_BASE+5
         jr nc,ck_not_key
         ; a keycard: its colour is its index
         sub TILE_KEY_BASE
@@ -2690,12 +2749,12 @@ cdo_skip:
         rend
         jr cdo_find
 cdo_open:
-        ld a,(ix+4)             ; the door's colour rides in bits 4-5
+        ld a,(ix+4)             ; the door's colour rides in bits 4-6
         rrca
         rrca
         rrca
         rrca
-        and 3
+        and 7
         ld e,a
         ld d,0
         ld hl,keys_held
@@ -2935,6 +2994,18 @@ draw_hud:
         ld c,0
         ld e,7                  ; yellow
         call draw_char
+        ld a,(keys_held+3)
+        and #0F
+        ld b,16
+        ld c,0
+        ld e,1                  ; white
+        call draw_char
+        ld a,(keys_held+4)
+        and #0F
+        ld b,20
+        ld c,0
+        ld e,5                  ; red
+        call draw_char
         ; the level number, top centre, in decimal
         ld a,(current_level)
         ld c,0
@@ -3028,6 +3099,8 @@ ms_blink:
         ld (keys_held),a
         ld (keys_held+1),a
         ld (keys_held+2),a
+        ld (keys_held+3),a
+        ld (keys_held+4),a
         ld (visited_stops),a    ; the lift knows nothing yet
         ld (immune_timer),a
         ld a,ENERGY_MAX
@@ -3705,7 +3778,7 @@ last_fall:      defb 0          ; lines dropped on the last landing
 
 frame_ctr:      defb 0          ; ++ every game/menu frame (blink, anim)
 game_lives:     defb START_LIVES
-keys_held:      defs 3,0        ; green, cyan, yellow keycards
+keys_held:      defs 5,0        ; green, cyan, yellow, white, red
 player_energy:  defb ENERGY_MAX
 immune_timer:   defb 0          ; post-hit invulnerability flicker
 current_level:  defb 1
@@ -3729,6 +3802,10 @@ ra_c0:          defb 0          ; restore_area's cell window scratch
 ra_c1:          defb 0
 ra_r0:          defb 0
 ra_r1:          defb 0
+ra_map:         defw 0          ; walking pointers: column anchors...
+ra_scr:         defw 0
+ra_mp:          defw 0          ; ...and the row walkers
+ra_sp:          defw 0
 
 leak_count:     defb 0
 leaks:          defs MAX_LEAKS*6,0    ; x,y,colour,interval,timer,pad

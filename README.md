@@ -60,13 +60,27 @@ At zero energy a life goes and the tank refills. **Medical crates**
 appear every few levels, worth 1–4 points; spill past 5 and the
 surplus banks a whole life (cap 9).
 
-**Security doors come in three colours** (green, cyan, yellow — tinted
-by each zone's palette) and their keycards are never beside them: a
-door's key always waits on a **lower platform or the bottom floor**.
-Mechanical runs at most one pair per level; Agricultural two colours;
-Administrative up to three chained pairs with the keys pushed right
-down to the floor. The HUD: key icon with three colour counts (left),
-level number (centre), energy bolt, and a heart with lives (right).
+**Security doors come in five colours** (green, cyan, yellow, white,
+red — tinted by each zone's palette) and their keycards are never
+beside them: a door's key waits on a **lower platform, the bottom
+floor — or an earlier level entirely**. Levels sow *spare* keys for
+doors further up the shaft; 23 doors have no key on their own level at
+all. The build-time verifier threads one global key inventory through
+the whole 59-level climb, so the forward route always works — and if
+you miss a key, levels reload fresh when revisited (taken keys are
+shown again), so with downward travel and the elevators nothing is
+ever softlocked. Mechanical runs at most one local pair; Agricultural
+introduces cross-level keys; Administrative chains up to three doors a
+level. The HUD: key icon with five colour counts (left), level number
+(centre), energy bolt, and a heart with lives (right).
+
+**Speed**: the two per-sprite costs are hand-tuned. The masked blit
+walks the sprite data with the *stack pointer* — one `POP` fetches a
+mask+data pair in 10 T-states (38 T/byte vs 54, interrupts held off
+per sprite). Background restore computes its map and screen pointers
+once per area and steps them linearly (+20/+80 a row, +1/+4 a column)
+instead of re-deriving addresses per cell — the busier the screen, the
+more this matters.
 
 ## Technical design
 
