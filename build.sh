@@ -8,6 +8,9 @@ IDSK="${IDSK:-iDSK}"
 
 mkdir -p build
 
+# Compile every sprite frame into draw-itself routines at #8000.
+python3 tools/sprite_compile.py > src/sprites_c.asm
+
 # Generate + verify all 59 levels: src/levels.asm (tables, tiles, font)
 # and build/levels0-2.bin (raw blobs, one per extra-RAM bank).
 python3 tools/level_gen.py src/levels.asm build

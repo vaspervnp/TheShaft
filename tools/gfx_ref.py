@@ -96,7 +96,9 @@ def glyph_grid(name, pen):
 def main():
     import os
     os.makedirs('docs/gfx', exist_ok=True)
-    fr = sprite_frames(open('src/main.asm').read())
+    from sprites_art import FRAMES
+    fr = {name: [[None if ch == '.' else int(ch, 16) for ch in row]
+                 for row in art] for name, art in FRAMES.items()}
     pairs = {
         'spr_mech_walk': ['spr_mech_r', 'spr_mech_r_b'],
         'spr_mech_climb': ['spr_mech_climb', 'spr_mech_climb_b'],
@@ -106,6 +108,7 @@ def main():
         'spr_throw': ['spr_throw_a', 'spr_throw_b'],
         'spr_rock': ['spr_rock'],
         'spr_drips': ['spr_drip_red', 'spr_drip_white'],
+        'spr_steam': ['spr_steam_a', 'spr_steam_b'],
     }
     for out, labels in pairs.items():
         save_grid(f'docs/gfx/{out}.png', [fr[l] for l in labels])

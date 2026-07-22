@@ -68,7 +68,11 @@ doors further up the shaft; 28 doors have no key on their own level at
 all. And about **a quarter of all keys sit inside sealed vaults**:
 somewhere on an *earlier* level is the wall switch that opens each one
 (its state persists for the whole run), so the deepest chains run
-switch → vault → door across three different levels. **Opened doors
+switch → vault → door across three different levels. **Red is the
+vault colour**: every red key sits sealed behind a switch and no other
+colour ever does — red doors are always the deep chains. And no
+switch is free: each one is guarded by a patrolling enemy, a red leak
+overhead, or a steam vent right under the lever. **Opened doors
 stay open for the whole run** — every door has a persistent id in a
 128-bit ledger, and revisited levels reload with their unlocked doors
 already gone (keys, by contrast, respawn on revisit). Medical crates
@@ -187,6 +191,7 @@ it; `_r` looks right, `_l` is the tool-mirrored copy.
 | ![](docs/gfx/spr_throw.png) | Thrower `spr_throw_a`/`_b` | 2 | 8 head/arms, 13 work shirt, 3 legs, 6 rock | Stationary; stands a platform above his victims. Frame B (arms up, rock overhead) shows for ~16 frames after each throw |
 | ![](docs/gfx/spr_rock.png) | Debris `spr_rock` | 1 | 6 | What the thrower drops: falls 3 lines/frame, half-height (8 px) hitbox, shatters on the first solid |
 | ![](docs/gfx/spr_drips.png) | Drips `spr_drip_red`/`_white` | 1 each | 5 / 1 | Lubricant from leaky ceiling pipes, falling 2 lines/frame. **Red hurts, white is water** — read the stain on the pipe |
+| ![](docs/gfx/spr_steam.png) | Steam `spr_steam_a`/`_b` | 2 | 1, 10 | A vent's blast: a standing 16-line column, flickering fast, lethal to touch for ~45 frames. Vent clocks run off the 300 Hz interrupt counter |
 | | Lasso rope | drawn, not stored | 7 | Not a sprite: `fill_rect` segments — a side line, a vertical line, or stepped 1×2 diagonal pieces, per the aim |
 
 ### Background tiles — 8×8 px opaque (4 bytes × 8 lines, raw, 32 bytes each)
@@ -221,7 +226,8 @@ fixed.
 | 26 | ![](docs/gfx/tile_26_leak_white.png) | `leak_white` | decor source | Same pipe, clean drip — a harmless fake-out |
 | 27 | ![](docs/gfx/tile_27_switch_off.png) | `switch_off` | interactive | Wall switch, red lever: touch to throw it and unseal its vault **on another level** |
 | 28 | ![](docs/gfx/tile_28_switch_on.png) | `switch_on` | decor | The same switch after pressing (green, stays thrown all run) |
-| 29 | ![](docs/gfx/tile_29_vault.png) | `vault` | pickup (gated) | Sealed key safe, grounded at feet level; once its switch is thrown it reloads as the keycard it guards |
+| 29 | ![](docs/gfx/tile_29_vault.png) | `vault` | pickup (gated) | Sealed key safe, grounded at feet level; once its switch is thrown it reloads as the keycard it guards — **and every vault holds a RED key: red keys exist nowhere else** |
+| 30 | ![](docs/gfx/tile_30_vent.png) | `vent` | hazard source | Steam nozzle, grounded; blasts a lethal column upward on its own 300 Hz-derived clock. One guards most switches |
 
 ### HUD & text — 8×8 glyphs, 1 bit/pixel, coloured per draw via `pen_left`
 
@@ -263,6 +269,12 @@ buffer **two** frames ago, not last frame's. The engine keeps one previous
    Human enemies replace the drones: riot-gear guards (slow patrol),
    long-coat crowbar men (fast patrol), throwers dropping debris from the
    platform above. Player fights back: lasso, duck, slide *(done)*
-7. Next: steam vents on the 300 Hz tick, fall damage using `last_fall`,
-   walk animation, an ending sequence at the airlock, AY music, and a
-   speed pass (compiled sprites) for the busiest screens
+7. ~~Polish~~ — steam vents timed off the 300 Hz interrupt counter,
+   fall damage via `last_fall`, walk animation, the airlock ending
+   sequence (three pages, green horizon, the truth), a two-voice AY
+   dirge on channels B+C (channel A stays with the SFX via a shared
+   mixer), and **compiled sprites**: every frame is a generated Z80
+   routine at `#8000` that draws itself — opaque bytes cost 10 T
+   instead of 38, empty rows cost nothing, and the masked-data blobs
+   left the main bank entirely *(done)*
+8. Next: more zones? boss floors? your move

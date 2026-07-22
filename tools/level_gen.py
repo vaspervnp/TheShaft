@@ -138,6 +138,9 @@ TILES = [
     ("vault", EMPTY, [                   # sealed key vault, grounded
         "11111111", "12222221", "12266221", "12266221",
         "12222221", "12222221", "12222221", "11111111"]),
+    ("vent", EMPTY, [                    # steam vent nozzle, grounded
+        "........", "........", "........", "...aa...",
+        "..a11a..", ".2a11a2.", "22233222", "33333333"]),
 ]
 CHARMAP = {'.': "empty", 'W': "wall", '#': "slab", 'F': "floor",
            'L': "ladder", 'C': "crate", 'p': "pipe", 'h': "hazard",
@@ -149,7 +152,7 @@ CHARMAP = {'.': "empty", 'W': "wall", '#': "slab", 'F': "floor",
            'm': "lamp", 'g': "grate", 'b': "bush", 'n': "panel",
            'E': "elevator", 'M': "medkit",
            'l': "leak_red", 'w': "leak_white",
-           '!': "switch_off", '$': "vault",
+           '!': "switch_off", '$': "vault", 'u': "vent",
            'R': "empty", 'G': "empty", 'T': "empty"}   # enemy markers
 
 # ----------------------------------------------------------------------
@@ -441,7 +444,10 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
     keys_at, vaults, switches = [], [], []
 
     def place_key(col, kplat):
-        if vq and rng.random() < 0.65:
+        # RED is the vault colour: every red key sits sealed behind a
+        # switch somewhere below, and no other colour ever does.
+        if col == 4:
+            assert vq, "red key needs a pending switch"
             vid = vq.pop(0)
             p, c = place_thing('$', kplat, drop=1)
             vaults.append((vid, p, c, col))
@@ -460,6 +466,40 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
     for sid in switch_ids:              # switches for vaults above
         p, c = place_thing('!', rng.randrange(-1, 3))
         switches.append((sid, p, c))
+        # ...and its guard: an obstacle so the press is never free.
+        # Floor switches never get an enemy (respawns land there).
+        kinds = ['vent', 'leak'] + (['enemy'] if p >= 0 else [])
+        rng.shuffle(kinds)
+        for kind in kinds:
+            if kind == 'vent':
+                vr = 23 if p < 0 else PLAT_ROWS[p] - 1
+                if grid[vr][c] == '.':      # right under the lever:
+                    grid[vr][c] = 'u'       # steam rises through it
+                    break
+            elif kind == 'leak':
+                lr = 0 if p == 2 else (19 if p < 0 else PLAT_ROWS[p + 1] + 1)
+                ok_hang = (lr == 0) or grid[lr - 1][c] == '#'
+                if ok_hang and grid[lr][c] == '.' \
+                   and all(abs(c - l) >= 2 for l in ladders):
+                    grid[lr][c] = 'l'       # red lubricant, of course
+                    break
+            else:
+                er = PLAT_ROWS[p] - 2
+                for dc in (2, -2, 3, -3):
+                    ec = c + dc
+                    if not (1 <= ec <= 18):
+                        continue
+                    if grid[er][ec] != '.' or grid[er + 1][ec] != '.':
+                        continue
+                    if TILES[tile_index(CHARMAP[grid[PLAT_ROWS[p]][ec]])][1] != SOLID:
+                        continue
+                    grid[er][ec] = 'RG'[rng.randrange(2)]
+                    break
+                else:
+                    continue
+                break
+        else:
+            raise AssertionError("switch has no guard")
 
     def plat_avoid(p):
         avoid = [ladders[p], ladders[p + 1]]
@@ -591,6 +631,16 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
 
 def door_color(level, r, c):
     return "XZQVN".index(level[r][c])
+
+
+def vents(level, rng):
+    out = []
+    for r, row in enumerate(level):
+        for c, ch in enumerate(row):
+            if ch == 'u':
+                interval = rng.randrange(140, 240)
+                out.append((c, r, interval, rng.randrange(1, interval)))
+    return out
 
 
 def leaks(level, rng):
@@ -739,6 +789,7 @@ def verify(level, plan, entry_col, name, inventory=None, pressed=None):
 def build_blob(level, zone, rng, plan_lookup, door_base=0):
     ems = enemies(level, zone, rng)
     lks = leaks(level, rng)
+    vns = vents(level, rng)
     tilemap = bytes(tile_index(CHARMAP[ch]) for row in level for ch in row)
     rects = b''
     for c0, c1, r0, r1, t in (solid_rects(level) + column_runs(level, DOOR)
@@ -765,6 +816,7 @@ def build_blob(level, zone, rng, plan_lookup, door_base=0):
     for sid, p, c in swp:
         r = 22 if p < 0 else PLAT_ROWS[p] - 2
         sdata += bytes([sid, c, r])
+    ndata = bytes([len(vns)]) + b''.join(bytes(v) for v in vns)
     vdata = bytes([len(vap)])
     for vid, p, c, col in vap:
         r = 23 if p < 0 else PLAT_ROWS[p] - 1   # grounded, feet level
@@ -782,10 +834,12 @@ def build_blob(level, zone, rng, plan_lookup, door_base=0):
     # trailer: this level's first global door id -- doors number
     # consecutively in rect order, for the opened-doors bitmask
     return (head + tilemap + rects + edata + ldata + sdata + vdata
-            + bytes([door_base])), len(ems)
+            + ndata + bytes([door_base])), len(ems)
 
 
-def main(asm_path, build_dir):
+def generate_all():
+    """The one true generation pass -- used by main() AND by every
+    verification script, so tests can never drift from the build."""
     rng = random.Random(0x5AF7)          # fixed seed: reproducible builds
     levels = [LEVEL1]
     plans = [{"ladders": [10, 12, 15, 8], "pairs": [], "gaps": [],
@@ -806,7 +860,17 @@ def main(asm_path, build_dir):
             has_med = (idx >= 20 and idx % 9 == 2)  # meds: level 20 up
             spare_n = (rng.random() < (0.15, 0.35, 0.55)[zone]) + \
                       (zone == 2 and rng.random() < 0.3)
-            spares = [rng.randrange(5) for _ in range(spare_n)]
+            # RED keys demand a pending vault switch each: constrain
+            # every colour pick against the switch pool
+            avail = len(switch_pool)
+            spares = []
+            for _ in range(spare_n):
+                c = rng.randrange(5)
+                if c == 4 and avail == 0:
+                    c = rng.randrange(4)
+                if c == 4:
+                    avail -= 1
+                spares.append(c)
             want = (rng.randrange(0, 2), rng.randrange(1, 3),
                     rng.randrange(2, 4))[zone]
             want = min(want, 1 + difficulty_cap(i))
@@ -820,13 +884,18 @@ def main(asm_path, build_dir):
             locals_n = want - len(cross)
             free = [c for c in range(5) if c not in cross]
             local_cols = rng.sample(free, min(locals_n, len(free)))
-            # the vault economy: sow a switch most levels (32 ids max);
-            # offer pending switch ids as vault candidates for the keys
-            # placed here -- their switches are all on EARLIER levels
+            if 4 in local_cols:
+                if avail == 0:
+                    others = [c for c in free if c != 4 and c not in local_cols]
+                    local_cols[local_cols.index(4)] = \
+                        others[0] if others else 0
+                else:
+                    avail -= 1
+            n_red = spares.count(4) + (1 if 4 in local_cols else 0)
             sow_switch = []
             if idx >= 2 and next_sid < 32 and rng.random() < 0.5:
                 sow_switch = [next_sid]
-            vids = switch_pool[:2]       # at most two vaults a level
+            vids = switch_pool[:n_red]   # exactly one switch per red key
             for attempt in range(150):
                 inv_try = inventory[:]
                 prs_try = set(pressed)
@@ -860,6 +929,12 @@ def main(asm_path, build_dir):
           f"{n_keys} keys vaulted ({100*n_vaults//max(1,n_keys)}%), "
           f"{next_sid} switches, {sum(spare_pool)} spares left",
           file=sys.stderr)
+    return levels, plans
+
+
+def main(asm_path, build_dir):
+    rng = random.Random(0x5AF7)          # fixed seed: reproducible builds
+    levels, plans = generate_all()
 
     # global door ids: consecutive per level, 128 bits of persistence
     door_bases, did = [], 0

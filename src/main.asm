@@ -131,7 +131,10 @@ ET_THROW        equ 3           ; drops debris from the platform above
 ET_PROJ         equ 4           ; the falling debris itself
 ET_DYING        equ 5           ; being erased from both buffers
 ET_DRIP         equ 6           ; falling lubricant (colour in +9)
+ET_STEAM        equ 7           ; a vent's blast: a standing column
 START_LIVES     equ 3
+MAX_VENTS       equ 4           ; steam vents per level
+STEAM_TIME      equ 45          ; frames a blast stays up
 
 ; Energy: every hit costs one point behind a 3-second immunity
 ; flicker; at zero a life goes and the tank refills.  Medical crates
@@ -226,6 +229,7 @@ game_loop:
         call flip_buffers       ; hardware page flip -- tear-free by timing
         call read_input         ; keyboard matrix + joystick -> flag bits
         call sfx_update         ; feed the AY (one write burst per frame)
+        call update_music       ; the shaft's dirge, channels B+C
         call update_player      ; walk/climb/jump/fall state machine
         ld a,(player_y)
         cp 8                    ; crossed the top edge of the screen?
@@ -254,6 +258,7 @@ gl_no_desc:
         cp LASSO_TIME           ; against the just-moved enemies
         call z,lasso_hits
         call update_leaks       ; ceiling pipes shed their drops
+        call update_vents       ; steam nozzles on the 300 Hz clock
         call check_enemy_hit    ; player box vs every hostile box
         call c,take_hit         ; costs energy, not (immediately) life
         call check_keycards     ; touching a keycard tile? collect it
@@ -1098,48 +1103,10 @@ draw_sprite_8x16:
         push de
         call screen_addr        ; HL = top-left byte on screen
         pop de
-        ; --- the fast path: SP walks the sprite data, so one POP
-        ; fetches a whole (mask,data) pair in 10 T-states.  Interrupts
-        ; must be off while SP is hijacked (an IRQ would push into the
-        ; sprite!), and nothing below may PUSH.  38 T/byte vs 54.
-        di
-        ld (dss_res+1),sp       ; self-modifying SP save (all-RAM CPC)
-        ex de,hl
-        ld sp,hl                ; SP -> sprite (mask,data) pairs
-        ex de,hl                ; HL -> screen again
-        ld c,SPR_H_LINES        ; 16 rows
-dss_row:
-        repeat 4                ; ---- one row, unrolled ----
-        pop de                  ; E = mask, D = data (little-endian)
-        ld a,e
-        and (hl)                ; background survives where mask=1
-        or d                    ; sprite pixels land where it is 0
-        ld (hl),a
-        inc hl
-        rend
-        ; ---- next scanline: +#800 minus the 4 bytes we advanced.
-        ; The character-row wrap test is unchanged: the line bits of H
-        ; still advance by exactly one.
-        ld a,l
-        add a,#FC
-        ld l,a
-        ld a,h
-        adc a,#07
-        ld h,a
-        and #38
-        jr nz,dss_same
-        ld a,l
-        add a,#50
-        ld l,a
-        ld a,h
-        adc a,#C0
-        ld h,a
-dss_same:
-        dec c
-        jr nz,dss_row
-dss_res:
-        ld sp,0                 ; (patched) give the real stack back
-        ei
+        ; DE now names a COMPILED routine (src/sprites_c.asm, #8000+):
+        ; the frame draws itself at HL.  PUSH+RET is the classic
+        ; "jump to DE": the routine's own RET returns to our caller.
+        push de
         ret
 
 ; ======================================================================
@@ -1846,6 +1813,38 @@ ll_va:
         pop bc
 ll_va_next:
         djnz ll_va
+ll_vents:
+        ; --- steam vents: nozzles that blast on their own clocks,
+        ; timed off the 300 Hz interrupt counter (see update_vents)
+        ld a,(hl)
+        inc hl
+        ld (vent_count),a
+        or a
+        jr z,ll_doors
+        ld b,a
+        ld ix,vent_tab
+ll_vn:
+        ld a,(hl)               ; map column ->
+        inc hl
+        add a,a
+        add a,a
+        ld (ix+0),a             ; x in bytes
+        ld a,(hl)               ; map row ->
+        inc hl
+        add a,a
+        add a,a
+        add a,a
+        sub 16
+        ld (ix+1),a             ; the blast column's top y (16 above)
+        ld a,(hl)
+        inc hl
+        ld (ix+2),a             ; interval (frames)
+        ld a,(hl)
+        inc hl
+        ld (ix+3),a             ; first countdown = phase
+        ld de,6
+        add ix,de
+        djnz ll_vn
 ll_doors:
         ; --- trailer: first global door id.  Walk the rects, note each
         ; door's id, and REOPEN any remembered from an earlier visit --
@@ -2127,22 +2126,153 @@ prev_level:
         ld (entry_y),a          ; still on the rails
         jp enter_level
 
-game_win:                       ; reached the top of the shaft (for now:
-        ld b,50                 ; a green flash, then back to the title)
-gw_loop:
-        push bc
-        call frame_sync
+game_win:
+        ; ==============================================================
+        ; THE AIRLOCK -- the ending.  Fifty-nine levels below, the
+        ; pumps still hammer.  Up here, the seal breaks.
+        ; ==============================================================
+        ld sp,#1000
+        call music_restart
+        call clear_buffers
+        ld hl,txt_end_t
+        ld b,18
+        ld c,56
+        ld e,10
+        call both_text
+        ld hl,txt_end_1a
+        ld b,0
+        ld c,88
+        ld e,1
+        call both_text
+        ld hl,txt_end_1b
+        ld b,4
+        ld c,104
+        ld e,2
+        call both_text
+        ld b,150                ; ~3 s a page, or Fire to hurry
+        call ew_wait
+        ; --- page 2: outside.  The border itself turns green.
+        call clear_buffers
         ld bc,GA_PORT+#10
         out (c),c
-        ld a,#52                ; bright green border
+        ld a,#52
         out (c),a
-        pop bc
-        djnz gw_loop
+        ld hl,txt_end_2t
+        ld b,12
+        ld c,40
+        ld e,9
+        call both_text2x
+        ld hl,txt_end_2a
+        ld b,4
+        ld c,88
+        ld e,1
+        call both_text
+        ld hl,txt_end_2b
+        ld b,4
+        ld c,96
+        ld e,1
+        call both_text
+        ld hl,txt_end_2c
+        ld b,0
+        ld c,112
+        ld e,7
+        call both_text
+        ld hl,txt_end_2d
+        ld b,0
+        ld c,120
+        ld e,7
+        call both_text
+        ld b,250
+        call ew_wait
         ld bc,GA_PORT+#10
         out (c),c
         ld a,#54
         out (c),a
+        ; --- page 3: the end
+        call clear_buffers
+        ld hl,txt_end_3t
+        ld b,12
+        ld c,80
+        ld e,7
+        call both_text2x
+        ld hl,txt_credit
+        ld b,6
+        ld c,120
+        ld e,2
+        call both_text
+        ld hl,txt_end_3b
+        ld b,20
+        ld c,160
+        ld e,6
+        call both_text
+        ld b,255
+        call ew_fire            ; this page waits for Fire
         jp menu_screen
+
+; ew_wait -- run B frames of the ending (music on), Fire skips ahead
+ew_wait:
+        push bc
+        call frame_sync
+        call flip_buffers
+        call read_input
+        call sfx_update
+        call update_music
+        pop bc
+        ld a,(input_new)
+        bit INP_FIRE,a
+        ret nz
+        djnz ew_wait
+        ret
+ew_fire:                        ; loop until Fire
+        push bc
+        call frame_sync
+        call flip_buffers
+        call read_input
+        call sfx_update
+        call update_music
+        pop bc
+        ld a,(input_new)
+        bit INP_FIRE,a
+        ret nz
+        jr ew_fire
+
+; both_text / both_text2x -- one line into BOTH screen buffers
+both_text:
+        ld (bt_ptr),hl
+        ld a,(draw_page)
+        push af
+        ld a,#40
+        ld (draw_page),a
+        push bc
+        push de
+        call draw_text
+        pop de
+        pop bc
+        ld a,#C0
+        ld (draw_page),a
+        ld hl,(bt_ptr)
+        call draw_text
+        pop af
+        ld (draw_page),a
+        ret
+both_text2x:
+        ld (bt_ptr),hl
+        ld a,(draw_page)
+        push af
+        ld a,#40
+        ld (draw_page),a
+        push bc
+        push de
+        call draw_text_2x
+        pop de
+        pop bc
+        ld a,#C0
+        ld (draw_page),a
+        ld hl,(bt_ptr)
+        call draw_text_2x
+        pop af
+        ld (draw_page),a
+        ret
 
 ; ======================================================================
 ;
@@ -2341,6 +2471,8 @@ ue_loop:
         jp z,ue_proj
         cp ET_DRIP
         jp z,ue_drip
+        cp ET_STEAM
+        jp z,ue_steam
         dec (ix+8)              ; ET_DYING: fade out, free the slot
         jp nz,ue_next
         ld (ix+0),ET_NONE
@@ -2407,6 +2539,12 @@ ue_proj:
         rra
         jr nc,ue_next
 ue_proj_die:
+        ld (ix+0),ET_DYING
+        ld (ix+8),2
+        jp ue_next
+ue_steam:
+        dec (ix+8)              ; the blast holds, then collapses
+        jp nz,ue_next
         ld (ix+0),ET_DYING
         ld (ix+8),2
         jp ue_next
@@ -2478,6 +2616,72 @@ sdr_found:
         ld a,(ix+2)
         ld (iy+9),a             ; colour: 1 = lubricant, 0 = water
         ld (iy+7),0
+        pop bc
+        pop ix
+        ret
+
+; ----------------------------------------------------------------------
+; update_vents -- the roadmap's "steam vents on the 300 Hz tick":
+; vent clocks advance by the measured delta of frame_ticks (the
+; interrupt counter), 6 ticks to a beat, so their timing is anchored
+; to the hardware interrupt, not to how long our frame took.
+; ----------------------------------------------------------------------
+update_vents:
+        ld a,(vent_count)
+        or a
+        ret z
+        ld hl,vent_last
+        ld a,(frame_ticks)
+        ld c,a
+        sub (hl)                ; ticks since last look
+        ld (hl),c
+        ld hl,vent_acc
+        add a,(hl)
+        ld (hl),a
+uv_beats:
+        ld a,(vent_acc)
+        cp 6
+        ret c                   ; less than a whole beat banked
+        sub 6
+        ld (vent_acc),a
+        ld a,(vent_count)
+        ld b,a
+        ld ix,vent_tab
+uv_loop:
+        dec (ix+3)
+        jr nz,uv_next
+        ld a,(ix+2)             ; rewind for the next blast
+        ld (ix+3),a
+        call spawn_steam
+uv_next:
+        ld de,6
+        add ix,de
+        djnz uv_loop
+        jr uv_beats
+
+spawn_steam:                    ; a standing blast above vent IX
+        push ix
+        push bc
+        ld iy,entities
+        ld b,MAX_ENTITIES
+sst_loop:
+        ld a,(iy+0)
+        or a
+        jr z,sst_found
+        ld de,ENT_SIZE
+        add iy,de
+        djnz sst_loop
+        pop bc                  ; pool full: the vent just hisses
+        pop ix
+        ret
+sst_found:
+        ld (iy+0),ET_STEAM
+        ld a,(ix+0)
+        ld (iy+1),a
+        ld a,(ix+1)
+        ld (iy+2),a
+        ld (iy+7),0
+        ld (iy+8),STEAM_TIME
         pop bc
         pop ix
         ret
@@ -2940,6 +3144,8 @@ entity_sprite:
         jr z,es_rock
         cp ET_DRIP
         jr z,es_drip
+        cp ET_STEAM
+        jr z,es_steam
         ; ET_THROW: arm up briefly after each throw
         ld a,(ix+4)             ; interval - timer = frames since throw
         sub (ix+8)
@@ -2957,6 +3163,13 @@ es_drip:
         or a
         ret nz
         ld de,spr_drip_white
+        ret
+es_steam:
+        ld de,spr_steam_a
+        ld a,(ix+7)
+        and 4                   ; flicker fast: reads as живой steam
+        ret z
+        ld de,spr_steam_b
         ret
 es_riot:
         ld de,spr_riot_r        ; face the patrol direction
@@ -3493,6 +3706,7 @@ menu_screen:
         xor a
         ld (sfx_timer),a
         call sfx_silence
+        call music_restart
         ld hl,menu_map          ; backdrop straight from main RAM
         ld (current_map),hl
         ld a,SCREEN_B/256
@@ -3505,6 +3719,7 @@ ms_loop:
         call frame_sync
         call flip_buffers
         call read_input
+        call update_music
         ld hl,frame_ctr
         inc (hl)
         ld a,(frame_ctr)        ; blink the prompt every 16 frames
@@ -3653,9 +3868,8 @@ sfx_update:                     ; call once per frame
         ld a,1
         ld e,0
         call psg_write          ; R1 = period high
-        ld a,7
-        ld e,%00111110          ; mixer: tone A only (bit 6 low!)
-        call psg_write
+        ld a,8                  ; claim: tone on A (music keeps B+C)
+        ld (mix_a),a
         ld a,(sfx_timer)
         add a,6                 ; volume 13..7 as the timer runs out
         ld e,a
@@ -3676,9 +3890,8 @@ sfx_upd_jump:
         ld a,1
         ld e,0
         call psg_write          ; R1
-        ld a,7
-        ld e,%00111110          ; tone A only
-        call psg_write
+        ld a,8
+        ld (mix_a),a
         ld a,8
         ld e,12                 ; steady volume; the sweep does the work
         jp psg_write
@@ -3687,9 +3900,8 @@ sfx_upd_hit:
         ld a,6
         ld e,14                 ; deep noise period: metallic rumble
         call psg_write
-        ld a,7
-        ld e,%00110111          ; noise on channel A, tones all off
-        call psg_write
+        ld a,1                  ; claim: noise on A
+        ld (mix_a),a
         ld a,(sfx_timer)
         srl a
         ld e,a
@@ -3714,9 +3926,8 @@ sfx_upd_whip:
         ld a,1
         ld e,0
         call psg_write          ; R1
-        ld a,7
-        ld e,%00111110          ; tone A only
-        call psg_write
+        ld a,8
+        ld (mix_a),a
         ld a,8
         ld e,10
         jp psg_write
@@ -3724,12 +3935,125 @@ sfx_silence:
         ld a,8
         ld e,0
         call psg_write          ; volume hard off
-        ld a,7
-        ld e,%00111111          ; mixer: everything off (bit 6 = 0)
-        jp psg_write
+        ld a,9                  ; release channel A entirely
+        ld (mix_a),a
+        ret
 
 sfx_len_tab:
         defb 12,24,8,6          ; frames: JUMP, HIT, PING, WHIP
+
+; ======================================================================
+;
+;   AY MUSIC -- a two-voice industrial drone on channels B and C,
+;   leaving channel A to the sound effects.  One (note,duration)
+;   stream per voice, #FF loops it; notes index note_table (1-based,
+;   0 = rest).  The two loops have different lengths on purpose: they
+;   drift against each other, so the dirge never quite repeats.
+;   The mixer register is written HERE, once a frame, combining the
+;   music's tone bits with whatever channel A currently claims
+;   (mix_a) -- bit 6 stays 0, or the keyboard dies.
+;
+; ======================================================================
+music_restart:
+        ld hl,tune_b
+        ld (mus_b_state),hl
+        ld hl,tune_c
+        ld (mus_c_state),hl
+        ld a,1
+        ld (mus_b_state+2),a
+        ld (mus_c_state+2),a
+        ret
+
+update_music:
+        ld ix,mus_b_state
+        ld de,tune_b
+        ld c,2                  ; R2/R3 tone B, R9 volume
+        call mus_channel
+        ld ix,mus_c_state
+        ld de,tune_c
+        ld c,4                  ; R4/R5 tone C, R10 volume
+        call mus_channel
+        ld a,(mix_a)            ; the one true mixer write
+        or #30                  ; noise B+C off, tones B+C on
+        ld e,a
+        ld a,7
+        jp psg_write
+
+mus_channel:                    ; IX=state{ptr,dur}, DE=tune, C=reg
+        dec (ix+2)
+        ret nz                  ; the note still rings
+        ld l,(ix+0)
+        ld h,(ix+1)
+mc_fetch:
+        ld a,(hl)
+        inc hl
+        cp #FF
+        jr nz,mc_note
+        ld l,e                  ; end of the stream: loop it
+        ld h,d
+        jr mc_fetch
+mc_note:
+        ld b,(hl)               ; duration in frames
+        inc hl
+        ld (ix+0),l
+        ld (ix+1),h
+        ld (ix+2),b
+        or a
+        jr nz,mc_play
+        push bc                 ; a rest: just close the volume
+        ld a,c
+        add a,7
+        ld e,0
+        call psg_write
+        pop bc
+        ret
+mc_play:
+        dec a                   ; 1-based note -> table word
+        add a,a
+        push de
+        ld e,a
+        ld d,0
+        ld hl,note_table
+        add hl,de
+        pop de
+        ld a,(hl)
+        ld (mus_period),a
+        inc hl
+        ld a,(hl)
+        ld (mus_period+1),a
+        push bc
+        ld a,(mus_period)
+        ld e,a
+        ld a,c
+        call psg_write          ; fine period
+        pop bc
+        push bc
+        ld a,(mus_period+1)
+        ld e,a
+        ld a,c
+        inc a
+        call psg_write          ; coarse period
+        pop bc
+        ld a,c
+        add a,7                 ; R9 or R10
+        ld e,6                  ; melody murmurs...
+        cp 10
+        jr nz,mc_vol
+        ld e,7                  ; ...the bass a shade louder
+mc_vol:
+        jp psg_write
+
+note_table:                     ; AY periods (1 MHz/16/f), C2 up
+        defw 956,902,851,803,758,716,676,638,602,568,536,506
+        defw 478,451,426,402,379,358,338,319,301,284,268,253,239
+tune_b:                         ; the melody: sparse, minor, watchful
+        defb 0,16, 13,8, 16,8, 18,8, 20,24, 18,8, 16,8, 13,24
+        defb 0,8, 16,8, 18,8, 20,8, 23,24, 20,8, 18,8, 16,24
+        defb #FF
+tune_c:                         ; the bass: the pumps, far below
+        defb 1,32, 4,32, 6,32, 8,16, 6,16
+        defb 1,32, 4,32, 9,32, 8,16, 4,16
+        defb #FF
 
 ; ======================================================================
 ; set_palette -- program all 16 inks + border via the Gate Array
@@ -3800,366 +4124,23 @@ int_stub_end:
 ; the rest recolour ladders, crates and deco per zone.)
 
 ; ----------------------------------------------------------------------
-; Sprites, all 8x16 masked, generated by tools/sprite_gen.py.
-; Walkers come in facing pairs: base label = frame A (right after
-; it, +128 bytes, frame B of the same facing).  _r looks right,
-; _l is the tool-mirrored copy.  The mechanic: hard hat, face and
-; forward hand toward travel; legs apart / together walk cycle.
-; Riot guard: visor and shield on the facing side.  Coat man:
-; crowbar carried forward, raised in frame B.
-; ----------------------------------------------------------------------
-spr_mech_r:
-        defb #FF,#00, #00,#FC, #00,#FC, #FF,#00   ; ..7777..
-        defb #AA,#54, #00,#FC, #00,#FC, #55,#A8   ; .777777.
-        defb #AA,#54, #00,#FC, #00,#03, #55,#02   ; .777888.
-        defb #AA,#54, #00,#FC, #00,#03, #55,#02   ; .777888.
-        defb #FF,#00, #00,#03, #00,#03, #FF,#00   ; ..8888..
-        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #00,#89   ; .3333338
-        defb #AA,#44, #00,#CC, #00,#CC, #00,#89   ; .3333338
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
-        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
-spr_mech_r_b:
-        defb #FF,#00, #00,#FC, #00,#FC, #FF,#00   ; ..7777..
-        defb #AA,#54, #00,#FC, #00,#FC, #55,#A8   ; .777777.
-        defb #AA,#54, #00,#FC, #00,#03, #55,#02   ; .777888.
-        defb #AA,#54, #00,#FC, #00,#03, #55,#02   ; .777888.
-        defb #FF,#00, #00,#03, #00,#03, #FF,#00   ; ..8888..
-        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #00,#89   ; .3333338
-        defb #AA,#44, #00,#CC, #00,#CC, #00,#89   ; .3333338
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
-        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
-        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
-        defb #FF,#00, #00,#0C, #00,#0C, #FF,#00   ; ..2222..
-        defb #FF,#00, #00,#0C, #00,#0C, #FF,#00   ; ..2222..
-spr_mech_l:
-        defb #FF,#00, #00,#FC, #00,#FC, #FF,#00   ; ..7777..
-        defb #AA,#54, #00,#FC, #00,#FC, #55,#A8   ; .777777.
-        defb #AA,#01, #00,#03, #00,#FC, #55,#A8   ; .888777.
-        defb #AA,#01, #00,#03, #00,#FC, #55,#A8   ; .888777.
-        defb #FF,#00, #00,#03, #00,#03, #FF,#00   ; ..8888..
-        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #00,#46, #00,#CC, #00,#CC, #55,#88   ; 8333333.
-        defb #00,#46, #00,#CC, #00,#CC, #55,#88   ; 8333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
-        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
-spr_mech_l_b:
-        defb #FF,#00, #00,#FC, #00,#FC, #FF,#00   ; ..7777..
-        defb #AA,#54, #00,#FC, #00,#FC, #55,#A8   ; .777777.
-        defb #AA,#01, #00,#03, #00,#FC, #55,#A8   ; .888777.
-        defb #AA,#01, #00,#03, #00,#FC, #55,#A8   ; .888777.
-        defb #FF,#00, #00,#03, #00,#03, #FF,#00   ; ..8888..
-        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #00,#46, #00,#CC, #00,#CC, #55,#88   ; 8333333.
-        defb #00,#46, #00,#CC, #00,#CC, #55,#88   ; 8333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
-        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
-        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
-        defb #FF,#00, #00,#0C, #00,#0C, #FF,#00   ; ..2222..
-        defb #FF,#00, #00,#0C, #00,#0C, #FF,#00   ; ..2222..
-; Climbing, seen from behind (looking at the ladder): hands swap
-; high/low as the legs alternate with height.
-spr_mech_climb:
-        defb #55,#02, #00,#FC, #00,#FC, #FF,#00   ; 8.7777..
-        defb #AA,#54, #00,#FC, #00,#FC, #55,#A8   ; .777777.
-        defb #AA,#54, #00,#FC, #00,#FC, #AA,#01   ; .77777.8
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #FF,#00, #00,#CC, #AA,#44, #55,#88   ; ..33.33.
-        defb #FF,#00, #00,#CC, #AA,#44, #55,#88   ; ..33.33.
-        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-spr_mech_climb_b:
-        defb #FF,#00, #00,#FC, #00,#FC, #AA,#01   ; ..7777.8
-        defb #AA,#54, #00,#FC, #00,#FC, #55,#A8   ; .777777.
-        defb #55,#02, #00,#FC, #00,#FC, #55,#A8   ; 8.77777.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#44, #55,#88, #00,#CC, #FF,#00   ; .33.33..
-        defb #AA,#44, #55,#88, #00,#CC, #FF,#00   ; .33.33..
-        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-spr_mech_duck:
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #00,#FC, #00,#FC, #FF,#00   ; ..7777..
-        defb #AA,#54, #00,#FC, #00,#FC, #55,#A8   ; .777777.
-        defb #AA,#54, #00,#03, #00,#03, #55,#A8   ; .788887.
-        defb #AA,#54, #00,#CC, #00,#CC, #55,#A8   ; .733337.
-        defb #00,#CC, #00,#CC, #00,#CC, #00,#CC   ; 33333333
-        defb #00,#CC, #00,#CC, #00,#CC, #00,#CC   ; 33333333
-        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
-        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
-spr_riot_r:
-        defb #FF,#00, #00,#0C, #00,#0C, #FF,#00   ; ..2222..
-        defb #AA,#04, #00,#0C, #00,#0C, #55,#08   ; .222222.
-        defb #AA,#04, #00,#48, #00,#C0, #55,#80   ; .221111.
-        defb #AA,#04, #00,#0C, #00,#0C, #55,#08   ; .222222.
-        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
-        defb #AA,#44, #00,#CC, #00,#8C, #55,#08   ; .333322.
-        defb #00,#CC, #00,#CC, #00,#CC, #00,#0C   ; 33333322
-        defb #00,#CC, #00,#CC, #00,#CC, #00,#0C   ; 33333322
-        defb #AA,#44, #00,#CC, #00,#8C, #55,#08   ; .333322.
-        defb #AA,#44, #55,#88, #00,#8C, #55,#08   ; .33.322.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
-        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-spr_riot_r_b:
-        defb #FF,#00, #00,#0C, #00,#0C, #FF,#00   ; ..2222..
-        defb #AA,#04, #00,#0C, #00,#0C, #55,#08   ; .222222.
-        defb #AA,#04, #00,#48, #00,#C0, #55,#80   ; .221111.
-        defb #AA,#04, #00,#0C, #00,#0C, #55,#08   ; .222222.
-        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
-        defb #AA,#44, #00,#CC, #00,#8C, #55,#08   ; .333322.
-        defb #00,#CC, #00,#CC, #00,#CC, #00,#0C   ; 33333322
-        defb #00,#CC, #00,#CC, #00,#CC, #00,#0C   ; 33333322
-        defb #AA,#44, #00,#CC, #00,#8C, #55,#08   ; .333322.
-        defb #AA,#44, #55,#88, #00,#8C, #55,#08   ; .33.322.
-        defb #FF,#00, #00,#CC, #AA,#44, #55,#88   ; ..33.33.
-        defb #FF,#00, #00,#CC, #AA,#44, #55,#88   ; ..33.33.
-        defb #FF,#00, #00,#CC, #AA,#44, #55,#88   ; ..33.33.
-        defb #FF,#00, #00,#0C, #AA,#04, #55,#08   ; ..22.22.
-        defb #FF,#00, #00,#0C, #AA,#04, #55,#08   ; ..22.22.
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-spr_riot_l:
-        defb #FF,#00, #00,#0C, #00,#0C, #FF,#00   ; ..2222..
-        defb #AA,#04, #00,#0C, #00,#0C, #55,#08   ; .222222.
-        defb #AA,#40, #00,#C0, #00,#84, #55,#08   ; .111122.
-        defb #AA,#04, #00,#0C, #00,#0C, #55,#08   ; .222222.
-        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
-        defb #AA,#04, #00,#4C, #00,#CC, #55,#88   ; .223333.
-        defb #00,#0C, #00,#CC, #00,#CC, #00,#CC   ; 22333333
-        defb #00,#0C, #00,#CC, #00,#CC, #00,#CC   ; 22333333
-        defb #AA,#04, #00,#4C, #00,#CC, #55,#88   ; .223333.
-        defb #AA,#04, #00,#4C, #AA,#44, #55,#88   ; .223.33.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
-        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-spr_riot_l_b:
-        defb #FF,#00, #00,#0C, #00,#0C, #FF,#00   ; ..2222..
-        defb #AA,#04, #00,#0C, #00,#0C, #55,#08   ; .222222.
-        defb #AA,#40, #00,#C0, #00,#84, #55,#08   ; .111122.
-        defb #AA,#04, #00,#0C, #00,#0C, #55,#08   ; .222222.
-        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
-        defb #AA,#04, #00,#4C, #00,#CC, #55,#88   ; .223333.
-        defb #00,#0C, #00,#CC, #00,#CC, #00,#CC   ; 22333333
-        defb #00,#0C, #00,#CC, #00,#CC, #00,#CC   ; 22333333
-        defb #AA,#04, #00,#4C, #00,#CC, #55,#88   ; .223333.
-        defb #AA,#04, #00,#4C, #AA,#44, #55,#88   ; .223.33.
-        defb #AA,#44, #55,#88, #00,#CC, #FF,#00   ; .33.33..
-        defb #AA,#44, #55,#88, #00,#CC, #FF,#00   ; .33.33..
-        defb #AA,#44, #55,#88, #00,#CC, #FF,#00   ; .33.33..
-        defb #AA,#04, #55,#08, #00,#0C, #FF,#00   ; .22.22..
-        defb #AA,#04, #55,#08, #00,#0C, #FF,#00   ; .22.22..
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-spr_coat_r:
-        defb #FF,#00, #00,#03, #00,#03, #FF,#00   ; ..8888..
-        defb #FF,#00, #00,#03, #00,#03, #FF,#00   ; ..8888..
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #00,#D8   ; .3333335
-        defb #AA,#44, #00,#CC, #00,#CC, #00,#F0   ; .3333355
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #55,#88, #00,#CC, #55,#88   ; .33.333.
-        defb #AA,#44, #55,#88, #00,#CC, #55,#88   ; .33.333.
-        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-spr_coat_r_b:
-        defb #FF,#00, #00,#03, #00,#03, #AA,#50   ; ..8888.5
-        defb #FF,#00, #00,#03, #00,#03, #55,#A0   ; ..88885.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
-        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
-        defb #FF,#00, #00,#0C, #00,#0C, #FF,#00   ; ..2222..
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-spr_coat_l:
-        defb #FF,#00, #00,#03, #00,#03, #FF,#00   ; ..8888..
-        defb #FF,#00, #00,#03, #00,#03, #FF,#00   ; ..8888..
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #00,#E4, #00,#CC, #00,#CC, #55,#88   ; 5333333.
-        defb #00,#F0, #00,#CC, #00,#CC, #55,#88   ; 5533333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #AA,#44, #55,#88   ; .333.33.
-        defb #AA,#44, #00,#CC, #AA,#44, #55,#88   ; .333.33.
-        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-spr_coat_l_b:
-        defb #55,#A0, #00,#03, #00,#03, #FF,#00   ; 5.8888..
-        defb #AA,#50, #00,#03, #00,#03, #FF,#00   ; .58888..
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #AA,#44, #00,#CC, #00,#CC, #55,#88   ; .333333.
-        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
-        defb #FF,#00, #00,#CC, #00,#CC, #FF,#00   ; ..3333..
-        defb #FF,#00, #00,#0C, #00,#0C, #FF,#00   ; ..2222..
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-spr_throw_a:
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #00,#03, #00,#03, #FF,#00   ; ..8888..
-        defb #FF,#00, #00,#03, #00,#03, #FF,#00   ; ..8888..
-        defb #AA,#51, #00,#F3, #00,#F3, #55,#A2   ; .dddddd.
-        defb #AA,#51, #00,#F3, #00,#F3, #55,#A2   ; .dddddd.
-        defb #AA,#51, #00,#F3, #00,#F3, #55,#A2   ; .dddddd.
-        defb #AA,#51, #00,#F3, #00,#F3, #55,#A2   ; .dddddd.
-        defb #FF,#00, #00,#F3, #00,#F3, #FF,#00   ; ..dddd..
-        defb #FF,#00, #00,#F3, #00,#F3, #FF,#00   ; ..dddd..
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
-        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-spr_throw_b:
-        defb #FF,#00, #00,#3C, #FF,#00, #FF,#00   ; ..66....
-        defb #AA,#01, #FF,#00, #FF,#00, #55,#02   ; .8....8.
-        defb #AA,#01, #00,#03, #00,#03, #55,#02   ; .888888.
-        defb #AA,#51, #00,#F3, #00,#F3, #55,#A2   ; .dddddd.
-        defb #AA,#51, #00,#F3, #00,#F3, #55,#A2   ; .dddddd.
-        defb #AA,#51, #00,#F3, #00,#F3, #55,#A2   ; .dddddd.
-        defb #AA,#51, #00,#F3, #00,#F3, #55,#A2   ; .dddddd.
-        defb #FF,#00, #00,#F3, #00,#F3, #FF,#00   ; ..dddd..
-        defb #FF,#00, #00,#F3, #00,#F3, #FF,#00   ; ..dddd..
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#44, #55,#88, #AA,#44, #55,#88   ; .33..33.
-        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
-        defb #AA,#04, #55,#08, #AA,#04, #55,#08   ; .22..22.
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-spr_rock:
-        defb #FF,#00, #00,#3C, #FF,#00, #FF,#00   ; ..66....
-        defb #AA,#14, #00,#3C, #55,#28, #FF,#00   ; .6666...
-        defb #AA,#14, #00,#3C, #00,#3C, #FF,#00   ; .66666..
-        defb #AA,#14, #00,#3C, #55,#28, #FF,#00   ; .6666...
-        defb #FF,#00, #00,#3C, #FF,#00, #FF,#00   ; ..66....
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-
-; Lubricant drips: red bites, white is only oily water.
-spr_drip_red:
-        defb #FF,#00, #AA,#50, #FF,#00, #FF,#00   ; ...5....
-        defb #FF,#00, #AA,#50, #55,#A0, #FF,#00   ; ...55...
-        defb #FF,#00, #AA,#50, #55,#A0, #FF,#00   ; ...55...
-        defb #FF,#00, #FF,#00, #55,#A0, #FF,#00   ; ....5...
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-spr_drip_white:
-        defb #FF,#00, #AA,#40, #FF,#00, #FF,#00   ; ...1....
-        defb #FF,#00, #AA,#40, #55,#80, #FF,#00   ; ...11...
-        defb #FF,#00, #AA,#40, #55,#80, #FF,#00   ; ...11...
-        defb #FF,#00, #FF,#00, #55,#80, #FF,#00   ; ....1...
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-        defb #FF,#00, #FF,#00, #FF,#00, #FF,#00   ; ........
-
-; ----------------------------------------------------------------------
 ; Menu / UI strings (ASCII; ascii_to_glyph maps them to the font)
 ; ----------------------------------------------------------------------
 txt_title:      defb "THE SHAFT",0
 txt_tag:        defb "THE TRUTH IS ABOVE",0
 txt_press:      defb "PRESS FIRE TO START",0
 txt_credit:     defb "REVIVE8BIT - 2026",0
+txt_end_t:      defb "THE AIRLOCK",0
+txt_end_1a:     defb "THE SEAL GRINDS OPEN",0
+txt_end_1b:     defb "COLD AIR RUSHES IN",0
+txt_end_2t:     defb "OUTSIDE",0
+txt_end_2a:     defb "GREEN HILLS TO THE",0
+txt_end_2b:     defb "HORIZON  CLEAN AIR",0
+txt_end_2c:     defb "THE POISON WAS A LIE",0
+txt_end_2d:     defb "THE SHAFT WAS A CAGE",0
+txt_end_3t:     defb "THE END",0
+txt_end_3b:     defb "PRESS FIRE",0
+bt_ptr:         defw 0
 
 ; ----------------------------------------------------------------------
 ; Generated data -- tools/level_gen.py emits src/levels.asm:
@@ -4223,6 +4204,10 @@ current_level:  defb 1
 respawn_x:      defb 38         ; where this level was entered
 sfx_type:       defb 0          ; active sound effect (0 = none)
 sfx_timer:      defb 0          ; frames left on it
+mix_a:          defb 9          ; channel A's mixer claim (tone/noise)
+mus_b_state:    defs 3,0        ; melody: stream ptr + frames left
+mus_c_state:    defs 3,0        ; bass
+mus_period:     defw 0
 
 player_facing:  defb 0          ; 0 = right, 1 = left (lasso, slide)
 player_duck:    defb 0          ; low profile this frame (duck/slide)
@@ -4260,6 +4245,10 @@ ra_sp:          defw 0
 
 leak_count:     defb 0
 leaks:          defs MAX_LEAKS*6,0    ; x,y,colour,interval,timer,pad
+vent_count:     defb 0
+vent_tab:       defs MAX_VENTS*6,0    ; x,blast_y,interval,timer,pad,pad
+vent_last:      defb 0          ; frame_ticks at the last vent update
+vent_acc:       defb 0          ; banked ticks (6 = one beat)
 
 entities:       defs MAX_ENTITIES*ENT_SIZE,0  ; the runtime pool
 entity_prev:    defs MAX_ENTITIES*4,0         ; (x,y) x 2 buffers each
@@ -4274,3 +4263,10 @@ key_matrix:     defs 10,#FF     ; raw matrix rows (active low, #FF = idle)
 
         ; keep everything below the #4000 screen buffer
         assert $ < SCREEN_B
+
+; ----------------------------------------------------------------------
+; Compiled sprites -- generated, lives at #8000 (the binary spans the
+; #4000-#7FFF gap; harmless: that RAM is screen buffer B, cleared at
+; boot, and the loader fills the EXTRA-ram banks before RUNning us).
+; ----------------------------------------------------------------------
+        include "sprites_c.asm"
