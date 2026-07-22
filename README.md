@@ -70,7 +70,11 @@ somewhere on an *earlier* level is the wall switch that opens each one
 (its state persists for the whole run), so the deepest chains run
 switch → vault → door across three different levels. **Red is the
 vault colour**: every red key sits sealed behind a switch and no other
-colour ever does — red doors are always the deep chains. And no
+colour ever does — red doors are always the deep chains. And the
+chains run both ways: about **half the vaults sit 1–3 levels BELOW
+their switch** — you throw the lever high, climb back down for the
+key (opened doors stay open, so the return is quick), and carry it up
+past the switch again. And no
 switch is free: each one is guarded by a patrolling enemy, a red leak
 overhead, or a steam vent right under the lever. **Opened doors
 stay open for the whole run** — every door has a persistent id in a

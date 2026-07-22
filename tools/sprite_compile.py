@@ -28,7 +28,7 @@ def right_pixel(pen):
 
 
 def compile_frame(name, art):
-    out = [f"{name}:"]
+    out = [f"_i_{name}:"]
     rows = [[None if ch == '.' else int(ch, 16) for ch in r] for r in art]
     # trim rows that are empty through to the end of the frame
     last = 0
@@ -86,6 +86,16 @@ def main():
     print("        adc a,#C0")
     print("        ld h,a")
     print("        ret")
+    print()
+    # The STUB TABLE: one 4-byte entry per frame (jp impl + nop), in
+    # FRAMES order -- A/B pairs are adjacent, so "frame B" is ALWAYS
+    # the public label + 4, regardless of how big the routines are.
+    print("; frame entry stubs: public label = jp to the real routine;")
+    print("; fixed 4-byte stride keeps frame B at label+4 forever")
+    for name in FRAMES:
+        print(f"{name}:")
+        print(f"        jp _i_{name}")
+        print("        nop")
     print()
     for name, art in FRAMES.items():
         print("\n".join(compile_frame(name, art)))

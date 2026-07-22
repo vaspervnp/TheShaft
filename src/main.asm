@@ -1028,7 +1028,7 @@ dp_ground:
         and 8
         jr z,dp_draw
 dp_stride:
-        ld hl,128               ; frame B sits right after frame A
+        ld hl,4                 ; frame B = the next 4-byte stub
         add hl,de
         ex de,hl
 dp_draw:
@@ -1783,8 +1783,8 @@ ll_vaults:
         ld a,(hl)
         inc hl
         or a
-        jr z,ll_doors
-        ld b,a
+        jr z,ll_vents           ; zero vaults -- but the vents and the
+        ld b,a                  ; door trailer still follow!
 ll_va:
         ld a,(hl)
         inc hl
@@ -1997,6 +1997,14 @@ sb_nc:
 ; ----------------------------------------------------------------------
 enter_level:
         ld sp,#1000
+        xor a                   ; in the shaft itself: no music --
+        ld (music_on),a         ; mute B+C once, SFX keeps playing
+        ld a,9
+        ld e,0
+        call psg_write
+        ld a,10
+        ld e,0
+        call psg_write
         ld a,(player_x)
         ld (respawn_x),a        ; where death brings us back
         ld a,(entry_y)          ; 176 climbing up / via lift,
@@ -2133,6 +2141,8 @@ game_win:
         ; ==============================================================
         ld sp,#1000
         call music_restart
+        ld a,1                  ; ...and for the ending
+        ld (music_on),a
         call clear_buffers
         ld hl,txt_end_t
         ld b,18
@@ -3186,7 +3196,7 @@ es_walk:
         ld a,(ix+7)
         and 8                   ; stride: swap legs every 8 frames
         ret z
-        ld hl,128               ; facing pair: frame B follows frame A
+        ld hl,4                 ; facing pair: frame B = stub + 4
         add hl,de
         ex de,hl
         ret
@@ -3707,6 +3717,8 @@ menu_screen:
         ld (sfx_timer),a
         call sfx_silence
         call music_restart
+        ld a,1                  ; music on for the title screen
+        ld (music_on),a
         ld hl,menu_map          ; backdrop straight from main RAM
         ld (current_map),hl
         ld a,SCREEN_B/256
@@ -3965,6 +3977,15 @@ music_restart:
         ret
 
 update_music:
+        ld a,(music_on)         ; the dirge belongs to the title and
+        or a                    ; the ending -- the climb itself is
+        jr nz,um_play           ; pumps, hisses and your own footsteps
+        ld a,(mix_a)
+        or #36                  ; B+C muted; SFX keeps channel A
+        ld e,a
+        ld a,7
+        jp psg_write
+um_play:
         ld ix,mus_b_state
         ld de,tune_b
         ld c,2                  ; R2/R3 tone B, R9 volume
@@ -4205,6 +4226,7 @@ respawn_x:      defb 38         ; where this level was entered
 sfx_type:       defb 0          ; active sound effect (0 = none)
 sfx_timer:      defb 0          ; frames left on it
 mix_a:          defb 9          ; channel A's mixer claim (tone/noise)
+music_on:       defb 0          ; the dirge plays in menu/ending only
 mus_b_state:    defs 3,0        ; melody: stream ptr + frames left
 mus_c_state:    defs 3,0        ; bass
 mus_period:     defw 0

@@ -360,7 +360,7 @@ PLAT_ROWS = (18, 12, 6)                 # platform slab rows, bottom-up
 
 def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
               cross_colors=(), spare_colors=(), local_colors=(),
-              switch_ids=(), vault_ids=()):
+              switch_ids=(), vault_ids=(), below_vault_ids=()):
     """Build one screen around the fixed climb skeleton.  Returns
     (map lines, plan); raises AssertionError when a layout constraint
     cannot be met (the caller simply retries with fresh randomness)."""
@@ -463,6 +463,11 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
         place_key(pp["color"], kplat)
     for col in spare_colors:            # sown for doors on levels above
         place_key(col, rng.randrange(-1, 3))
+    for vid in below_vault_ids:
+        # a vault sown BEFORE its switch: the lever waits 1-3 levels
+        # ABOVE, so this red key means a deliberate climb back down
+        p, c = place_thing('$', rng.randrange(-1, 3), drop=1)
+        vaults.append((vid, p, c, 4))
     for sid in switch_ids:              # switches for vaults above
         p, c = place_thing('!', rng.randrange(-1, 3))
         switches.append((sid, p, c))
@@ -850,8 +855,9 @@ def generate_all():
     pressed = set()                      # switches thrown so far
     spare_pool = [0] * 5                 # spare keys sown but not spent
     switch_pool = []                     # switch ids sown, vaults pending
-    next_sid = 0
-    n_cross = n_vaults = n_keys = 0
+    pending_below = []                   # (id, level): vaults awaiting
+    next_sid = 0                         # their switch 1-3 levels up
+    n_cross = n_vaults = n_keys = n_below = 0
     for zone, count in enumerate(ZONE_SIZE):
         first = 1 if zone == 0 else 0    # zone 0 includes hand-made L1
         for i in range(first, count):
@@ -892,9 +898,22 @@ def generate_all():
                 else:
                     avail -= 1
             n_red = spares.count(4) + (1 if 4 in local_cols else 0)
+            # BELOW-stream: sow a sealed vault whose switch comes
+            # 1-3 levels later (about half of all vaults)
+            below_vids = []
+            if 2 <= idx <= 56 and next_sid < 32 and rng.random() < 0.3:
+                below_vids = [next_sid]
+                next_sid += 1
+            # switches: the ABOVE-stream sowing, plus any below-vault
+            # whose window is closing (or opportunistically inside it)
             sow_switch = []
-            if idx >= 2 and next_sid < 32 and rng.random() < 0.5:
+            if idx >= 2 and next_sid < 32 and rng.random() < 0.35:
                 sow_switch = [next_sid]
+                next_sid += 1
+            below_due = [b for b in pending_below
+                         if idx - b[1] == 3
+                         or (idx - b[1] >= 1 and rng.random() < 0.5)]
+            sow_switch += [b[0] for b in below_due]
             vids = switch_pool[:n_red]   # exactly one switch per red key
             for attempt in range(150):
                 inv_try = inventory[:]
@@ -903,7 +922,7 @@ def generate_all():
                     lv, plan = gen_level(rng, zone, exit_col, i,
                                          has_elev, has_med,
                                          cross, spares, local_cols,
-                                         sow_switch, vids)
+                                         sow_switch, vids, below_vids)
                     verify(lv, plan, exit_col, f"L{idx}", inv_try, prs_try)
                     break
                 except AssertionError:
@@ -914,9 +933,21 @@ def generate_all():
             pressed = prs_try
             used_vids = [v[0] for v in plan["vaults"]]
             switch_pool = [s for s in switch_pool if s not in used_vids]
-            if plan["switches"]:
-                switch_pool.append(plan["switches"][0][0])
-                next_sid += 1
+            below_ids = {b[0] for b in pending_below}
+            for sid, _p, _c in plan["switches"]:
+                if sid in below_ids:
+                    # its sealed vault waits 1-3 levels BELOW: the
+                    # player can always climb down, collect the red
+                    # key and return (doors stay open), so credit it
+                    spare_pool[4] += 1
+                    inventory[4] += 1
+                    pending_below = [b for b in pending_below
+                                     if b[0] != sid]
+                    n_below += 1
+                else:
+                    switch_pool.append(sid)
+            for vid in below_vids:
+                pending_below.append((vid, idx))
             for c in spares:
                 spare_pool[c] += 1
             n_cross += len(cross)
@@ -925,9 +956,11 @@ def generate_all():
             levels.append(lv)
             plans.append(plan)
             exit_col = plan["ladders"][3]
+    assert not pending_below, f"orphan below-vaults: {pending_below}"
     print(f"key economy: {n_cross} cross-level doors, {n_vaults} of "
           f"{n_keys} keys vaulted ({100*n_vaults//max(1,n_keys)}%), "
-          f"{next_sid} switches, {sum(spare_pool)} spares left",
+          f"{n_below} vaults BELOW their switch, "
+          f"{next_sid} switch ids, {sum(spare_pool)} spares left",
           file=sys.stderr)
     return levels, plans
 
