@@ -1779,7 +1779,10 @@ ll_sw_off:
         djnz ll_sw
 ll_vaults:
         ; --- vaults: an OPEN vault (its switch thrown) becomes the
-        ; keycard it guards, right in the map
+        ; keycard it guards, right in the map.  SEALED ones go into
+        ; vault_tab so standing on one can point at its switch.
+        xor a
+        ld (vault_count),a
         ld a,(hl)
         inc hl
         or a
@@ -1801,14 +1804,48 @@ ll_va:
         ld a,(hl)
         inc hl
         pop bc
-        jr nc,ll_va_next        ; sealed: the vault tile stays
+        jr c,ll_va_open
+        ; sealed: remember the cell and which WAY its switch lies --
+        ; bit 7 of the colour byte says the lever waits ABOVE
         push bc
         push hl
-        add a,TILE_KEY_BASE     ; A was the key colour
-        push af                 ; (map_cell_addr eats BC -- keep the
-        call map_cell_addr      ;  tile in AF, not in C!)
-        pop af
+        ld c,a                  ; C = colour byte (with the dir bit)
+        ld a,(vault_count)
+        ld l,a
+        add a,a
+        add a,l                 ; x3: table stride
+        ld hl,vault_tab
+        add a,l
+        ld l,a
+        jr nc,ll_va_s1
+        inc h
+ll_va_s1:
+        ld (hl),d               ; map column
+        inc hl
+        ld (hl),e               ; map row
+        inc hl
+        ld a,GLYPH_DOWN         ; switch below: point down...
+        bit 7,c
+        jr z,ll_va_s2
+        ld a,GLYPH_UP           ; ...switch above: point up
+ll_va_s2:
         ld (hl),a
+        ld hl,vault_count
+        inc (hl)
+        pop hl
+        pop bc
+        jr ll_va_next
+ll_va_open:
+        push bc
+        push hl
+        and 7                   ; strip the direction bit: the colour
+        add a,TILE_KEY_BASE
+        push af
+        dec e                   ; the safe stays where it is -- its
+        call map_cell_addr      ; red key appears ON TOP of it (the
+        pop af                  ; cell above is empty by construction)
+        ld (hl),a
+        inc e
         pop hl
         pop bc
 ll_va_next:
@@ -3050,6 +3087,39 @@ re_d_next:
         djnz re_draw
         call draw_player        ; player next-to-last: in front of foes
         ; --- and the rope, while the whip is out
+        ; --- the vault hint: an arrow over the head, blinking,
+        ; pointing the way to the sealed vault's switch
+        ld a,(hint_glyph)
+        or a
+        jr z,re_no_arrow
+        ld a,(frame_ctr)
+        and 8                   ; blink: 8 frames on, 8 off
+        jr z,re_no_arrow
+        ld a,(player_y)
+        sub 12
+        jr nc,re_ar_y
+        xor a
+re_ar_y:
+        ld c,a
+        ld a,(player_x)
+        ld b,a
+        ld hl,hint_prev         ; remember for this buffer's restore
+        ld a,(buf_index)
+        ld e,a
+        add a,a
+        add a,e
+        ld e,a
+        ld d,0
+        add hl,de
+        ld (hl),1
+        inc hl
+        ld (hl),b
+        inc hl
+        ld (hl),c
+        ld a,(hint_glyph)
+        ld e,7                  ; bright yellow
+        call draw_char_any
+re_no_arrow:
         ld a,(lasso_timer)
         cp LASSO_TIME-5
         ret c                   ; recoiled: nothing to draw
@@ -3212,6 +3282,8 @@ es_walk:
 ;
 ; ======================================================================
 check_keycards:
+        xor a                   ; the hint lives one frame at a time
+        ld (hint_glyph),a
         ld a,(player_x)         ; scan the same <=2x3 cell neighbourhood
         srl a                   ; the sprite can overlap
         srl a
@@ -3261,8 +3333,39 @@ ck_cell:                        ; keycards and medkits, by tile index
         inc (hl)
         pop de
         pop hl
-        jr ck_took
+        jp ck_took
 ck_not_key:
+        cp TILE_VAULT
+        jr nz,ck_not_vault
+        ; standing at a sealed vault: find it, point at its switch
+        push de
+        push bc
+        ld a,(vault_count)
+        or a
+        jr z,ck_va_out
+        ld b,a
+        ld ix,vault_tab
+ck_va_find:
+        ld a,(ix+0)
+        cp d
+        jr nz,ck_va_next
+        ld a,(ix+1)
+        cp e
+        jr z,ck_va_hit
+ck_va_next:
+        inc ix
+        inc ix
+        inc ix
+        djnz ck_va_find
+ck_va_out:
+        pop bc
+        pop de
+        ret
+ck_va_hit:
+        ld a,(ix+2)             ; the arrow glyph to show
+        ld (hint_glyph),a
+        jr ck_va_out
+ck_not_vault:
         cp TILE_SWITCH_OFF
         jr nz,ck_not_switch
         ; a wall switch: find its record by cell, set its bit --
@@ -3497,6 +3600,62 @@ dchr_row:
         add a,8
         ld h,a
         djnz dchr_row
+        ret
+
+; draw_char_any -- as draw_char, but y may sit anywhere: the row
+; step uses the wrap-safe walk (the hint arrow floats over the head)
+draw_char_any:
+        push bc
+        ld l,a
+        ld h,0
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        ld bc,font_8x8
+        add hl,bc
+        push hl
+        pop ix
+        ld d,0
+        ld hl,pen_left
+        add hl,de
+        ld a,(hl)
+        ld d,a
+        srl a
+        ld e,a
+        pop bc
+        push de
+        call screen_addr
+        pop de
+        ld b,8
+dca_row:
+        push hl
+        ld c,(ix+0)
+        inc ix
+        repeat 4
+        xor a
+        rlc c
+        jr nc,$+3
+        or d
+        rlc c
+        jr nc,$+3
+        or e
+        ld (hl),a
+        inc hl
+        rend
+        pop hl
+        ld a,h                  ; generic next-line step, wrap-safe
+        add a,8
+        ld h,a
+        and #38
+        jr nz,dca_ok
+        ld a,l
+        add a,#50
+        ld l,a
+        ld a,h
+        adc a,#C0
+        ld h,a
+dca_ok:
+        djnz dca_row
         ret
 
 ; draw_char_2x -- as draw_char but doubled: 16x16 pixels, any y.
@@ -4271,6 +4430,10 @@ vent_count:     defb 0
 vent_tab:       defs MAX_VENTS*6,0    ; x,blast_y,interval,timer,pad,pad
 vent_last:      defb 0          ; frame_ticks at the last vent update
 vent_acc:       defb 0          ; banked ticks (6 = one beat)
+vault_count:    defb 0          ; sealed vaults on this level
+vault_tab:      defs 4*3,0      ; per vault: map col, row, arrow glyph
+hint_glyph:     defb 0          ; arrow to show this frame (0 = none)
+hint_prev:      defs 6,0        ; per buffer: {act,x,y} of the arrow
 
 entities:       defs MAX_ENTITIES*ENT_SIZE,0  ; the runtime pool
 entity_prev:    defs MAX_ENTITIES*4,0         ; (x,y) x 2 buffers each

@@ -327,6 +327,8 @@ font_8x8:
         defb #30,#48,#48,#30,#10,#14,#18,#00   ; 'KEY'
         defb #28,#7C,#7C,#38,#10,#00,#00,#00   ; 'HEART'
         defb #0C,#18,#30,#78,#18,#30,#20,#00   ; 'BOLT'
+        defb #10,#38,#7C,#54,#10,#10,#10,#00   ; 'UP'
+        defb #10,#10,#10,#54,#7C,#38,#10,#00   ; 'DOWN'
 
 ; --- pen -> Mode 0 left-pixel bits ---
 pen_left:
@@ -499,6 +501,8 @@ GLYPH_SPACE     equ 37
 GLYPH_KEY       equ 38
 GLYPH_HEART     equ 39
 GLYPH_BOLT      equ 40
+GLYPH_UP        equ 41
+GLYPH_DOWN      equ 42
 ; elevator stops, bottom terminus first
 ELEV_COUNT      equ 6
 elev_stops:

@@ -230,7 +230,7 @@ fixed.
 | 26 | ![](docs/gfx/tile_26_leak_white.png) | `leak_white` | decor source | Same pipe, clean drip — a harmless fake-out |
 | 27 | ![](docs/gfx/tile_27_switch_off.png) | `switch_off` | interactive | Wall switch, red lever: touch to throw it and unseal its vault **on another level** |
 | 28 | ![](docs/gfx/tile_28_switch_on.png) | `switch_on` | decor | The same switch after pressing (green, stays thrown all run) |
-| 29 | ![](docs/gfx/tile_29_vault.png) | `vault` | pickup (gated) | Sealed key safe, grounded at feet level; once its switch is thrown it reloads as the keycard it guards — **and every vault holds a RED key: red keys exist nowhere else** |
+| 29 | ![](docs/gfx/tile_29_vault.png) | `vault` | pickup (gated) | Sealed key safe, grounded at feet level; once its switch is thrown, the safe stays put and its red keycard appears on top of it — **and every vault holds a RED key: red keys exist nowhere else**. Stand on a sealed one and a blinking arrow over your head points the way to its switch — up or down the shaft |
 | 30 | ![](docs/gfx/tile_30_vent.png) | `vent` | hazard source | Steam nozzle, grounded; blasts a lethal column upward on its own 300 Hz-derived clock. One guards most switches |
 
 ### HUD & text — 8×8 glyphs, 1 bit/pixel, coloured per draw via `pen_left`

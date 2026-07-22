@@ -196,8 +196,10 @@ GLYPHS = {
     'KEY':   [0x0C,0x12,0x12,0x0C,0x04,0x05,0x06],
     'HEART': [0x0A,0x1F,0x1F,0x0E,0x04,0x00,0x00],
     'BOLT':  [0x03,0x06,0x0C,0x1E,0x06,0x0C,0x08],
+    'UP':    [0x04,0x0E,0x1F,0x15,0x04,0x04,0x04],
+    'DOWN':  [0x04,0x04,0x04,0x15,0x1F,0x0E,0x04],
 }
-FONT_EXTRA = ['KEY', 'HEART', 'BOLT']
+FONT_EXTRA = ['KEY', 'HEART', 'BOLT', 'UP', 'DOWN']
 
 # ----------------------------------------------------------------------
 # Level 1: the hand-authored opening screen (exit ladder col 8)
@@ -450,7 +452,7 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
             assert vq, "red key needs a pending switch"
             vid = vq.pop(0)
             p, c = place_thing('$', kplat, drop=1)
-            vaults.append((vid, p, c, col))
+            vaults.append((vid, p, c, col, 0))   # switch is BELOW
         else:
             p, c = place_thing(KEY_CH[col], kplat)
             keys_at.append((p, c))
@@ -467,7 +469,7 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
         # a vault sown BEFORE its switch: the lever waits 1-3 levels
         # ABOVE, so this red key means a deliberate climb back down
         p, c = place_thing('$', rng.randrange(-1, 3), drop=1)
-        vaults.append((vid, p, c, 4))
+        vaults.append((vid, p, c, 4, 1))        # switch is ABOVE
     for sid in switch_ids:              # switches for vaults above
         p, c = place_thing('!', rng.randrange(-1, 3))
         switches.append((sid, p, c))
@@ -514,7 +516,7 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
         for kp, kc in keys_at:
             if kp == p:
                 avoid.append(kc)
-        for _v, kp, kc, _c in vaults:
+        for _v, kp, kc, _c, _d in vaults:
             if kp == p:
                 avoid.append(kc)
         for _s, kp, kc in switches:
@@ -673,7 +675,7 @@ def verify(level, plan, entry_col, name, inventory=None, pressed=None):
     if pressed is None:
         pressed = set()
     vault_by_cell = {(p, c): (vid, col)
-                     for vid, p, c, col in plan.get("vaults", [])}
+                     for vid, p, c, col, _d in plan.get("vaults", [])}
     switch_by_cell = {(p, c): sid for sid, p, c in plan.get("switches", [])}
 
     def plat_of(yy):
@@ -768,7 +770,7 @@ def verify(level, plan, entry_col, name, inventory=None, pressed=None):
 
     touch = list(plan["keys_at"]) \
             + [(p, c) for _s, p, c in plan.get("switches", [])] \
-            + [(p, c) for _v, p, c, _col in plan.get("vaults", [])]
+            + [(p, c) for _v, p, c, _col, _d in plan.get("vaults", [])]
     # floor first: press and pocket everything stashed down here
     for kp, kc in touch:
         if kp < 0:
@@ -823,9 +825,10 @@ def build_blob(level, zone, rng, plan_lookup, door_base=0):
         sdata += bytes([sid, c, r])
     ndata = bytes([len(vns)]) + b''.join(bytes(v) for v in vns)
     vdata = bytes([len(vap)])
-    for vid, p, c, col in vap:
+    for vid, p, c, col, sw_above in vap:
         r = 23 if p < 0 else PLAT_ROWS[p] - 1   # grounded, feet level
-        vdata += bytes([vid, c, r, col])
+        # bit 7 of the colour byte: 1 = its switch is ABOVE this level
+        vdata += bytes([vid, c, r, col | (sw_above << 7)])
     # elevator door column (x in bytes), #FF when the level has none
     elev = 0xFF
     for c, ch in enumerate(level[22]):
@@ -931,7 +934,7 @@ def generate_all():
                 raise SystemExit(f"L{idx}: no completable layout found")
             inventory = inv_try
             pressed = prs_try
-            used_vids = [v[0] for v in plan["vaults"]]
+            used_vids = [v[0] for v in plan["vaults"] if v[4] == 0]
             switch_pool = [s for s in switch_pool if s not in used_vids]
             below_ids = {b[0] for b in pending_below}
             for sid, _p, _c in plan["switches"]:
@@ -1035,6 +1038,8 @@ def main(asm_path, build_dir):
         w(f"GLYPH_KEY       equ {len(FONT_ORDER)}\n")
         w(f"GLYPH_HEART     equ {len(FONT_ORDER) + 1}\n")
         w(f"GLYPH_BOLT      equ {len(FONT_ORDER) + 2}\n")
+        w(f"GLYPH_UP        equ {len(FONT_ORDER) + 3}\n")
+        w(f"GLYPH_DOWN      equ {len(FONT_ORDER) + 4}\n")
         stops = [1] + [n for n in range(1, len(levels) + 1) if n % 10 == 0]
         w("; elevator stops, bottom terminus first\n")
         w(f"ELEV_COUNT      equ {len(stops)}\nelev_stops:\n")
