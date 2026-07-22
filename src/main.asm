@@ -3330,10 +3330,17 @@ ck_cell:                        ; keycards and medkits, by tile index
         ld d,0
         ld hl,keys_held
         add hl,de
+        ld a,(hl)
+        cp 9                    ; pockets full of this colour? then
+        jr nc,ck_key_full       ; the card stays where it lies
         inc (hl)
         pop de
         pop hl
         jp ck_took
+ck_key_full:
+        pop de
+        pop hl
+        ret
 ck_not_key:
         cp TILE_VAULT
         jr nz,ck_not_vault
