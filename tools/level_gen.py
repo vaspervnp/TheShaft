@@ -141,6 +141,45 @@ TILES = [
     ("vent", EMPTY, [                    # steam vent nozzle, grounded
         "........", "........", "........", "...aa...",
         "..a11a..", ".2a11a2.", "22233222", "33333333"]),
+    ("arch_tl", EMPTY, [                 # corridor mouth, 2x2 tiles:
+        "22222222", "22000000", "20000000", "20000001",
+        "20000001", "20000000", "20000000", "20000000"]),
+    ("arch_tr", EMPTY, [                 # ...a doorway into the depth
+        "22222222", "00000022", "00000002", "10000002",
+        "10000002", "00000002", "00000002", "00000002"]),
+    ("arch_bl", EMPTY, [                 # lower half: the floor of the
+        "20000000", "20000000", "20000000", "20000222",
+        "20002222", "20022222", "20222222", "22222222"]),
+    ("arch_br", EMPTY, [                 # passage recedes to a point
+        "00000002", "00000002", "00000002", "22200002",
+        "22220002", "22222002", "22222202", "22222222"]),
+    ("painting_a", EMPTY, [              # gilt-framed portrait
+        "77777777", "70000007", "70088007", "70888807",
+        "70088007", "70333307", "70000007", "77777777"]),
+    ("painting_b", EMPTY, [              # landscape: sun over green hills
+        "77777777", "71111117", "71711117", "71111117",
+        "71199117", "79999997", "79999997", "77777777"]),
+    ("painting_c", EMPTY, [              # abstract, boardroom-grade
+        "22222222", "25511002", "25511002", "20055112",
+        "20055112", "21100552", "21100552", "22222222"]),
+    ("pipe_h", EMPTY, [                  # horizontal pipe run
+        "........", "........", "33333333", "44444444",
+        "44444444", "11111111", "33333333", "........"]),
+    ("pipe_bl", EMPTY, [                 # elbow: from the left, down
+        "........", "........", "333333..", "444444..",
+        "444444..", ".34413..", ".34413..", ".34413.."]),
+    ("pipe_br", EMPTY, [                 # elbow: from the right, down
+        "........", "........", "..333333", "..444444",
+        "..444444", ".34413..", ".34413..", ".34413.."]),
+    ("flange_l", EMPTY, [                # collar where a pipe leaves
+        ".2......", "22333333", "22444444", "22444444",
+        "22111111", "22333333", ".2......", "........"]),
+    ("flange_r", EMPTY, [                # ...the left or the right wall
+        "......2.", "33333322", "44444422", "44444422",
+        "11111122", "33333322", "......2.", "........"]),
+    ("duct", SOLID, [                    # hanging vent duct: slide under!
+        ".2....2.", ".2....2.", "11111111", "22022022",
+        "22022022", "22022022", "22022022", "00000000"]),
 ]
 CHARMAP = {'.': "empty", 'W': "wall", '#': "slab", 'F': "floor",
            'L': "ladder", 'C': "crate", 'p': "pipe", 'h': "hazard",
@@ -153,6 +192,11 @@ CHARMAP = {'.': "empty", 'W': "wall", '#': "slab", 'F': "floor",
            'E': "elevator", 'M': "medkit",
            'l': "leak_red", 'w': "leak_white",
            '!': "switch_off", '$': "vault", 'u': "vent",
+           'a': "arch_tl", 'e': "arch_tr",
+           'c': "arch_bl", 'q': "arch_br",
+           'x': "painting_a", 'y': "painting_b", 'z': "painting_c",
+           'i': "pipe_h", 'j': "pipe_bl", 'k': "pipe_br",
+           'f': "flange_l", 't': "flange_r", 'd': "duct",
            'R': "empty", 'G': "empty", 'T': "empty"}   # enemy markers
 
 # ----------------------------------------------------------------------
@@ -362,7 +406,8 @@ PLAT_ROWS = (18, 12, 6)                 # platform slab rows, bottom-up
 
 def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
               cross_colors=(), spare_colors=(), local_colors=(),
-              switch_ids=(), vault_ids=(), below_vault_ids=()):
+              switch_ids=(), vault_ids=(), below_vault_ids=(),
+              obstacle=False):
     """Build one screen around the fixed climb skeleton.  Returns
     (map lines, plan); raises AssertionError when a layout constraint
     cannot be met (the caller simply retries with fresh randomness)."""
@@ -606,8 +651,70 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
         grid[row][c] = ch
         placed += 1
 
+    # the duck-under duct: a head-height obstacle across one walkway.
+    # The crawl gap below it stays open; solid deck required under all
+    # four columns so it never sits beside a jumpable gap.
+    obstacles = []
+    if obstacle:
+        for _ in range(150):
+            p = rng.randrange(0, 3)
+            pr = PLAT_ROWS[p]
+            c = rng.randrange(2, 17)
+            if any(abs(cc - b) < 2 for cc in (c, c + 1)
+                   for b in plat_avoid(p)):
+                continue
+            if any(grid[pr - 2][cc] != '.' or grid[pr - 1][cc] != '.'
+                   for cc in (c, c + 1)):
+                continue
+            if any(TILES[tile_index(CHARMAP[grid[pr][cc]])][1] != SOLID
+                   for cc in (c - 1, c, c + 1, c + 2)):
+                continue
+            grid[pr - 2][c] = grid[pr - 2][c + 1] = 'd'
+            obstacles.append((p, c))
+            break
+
+    # background corridor mouths: scenic depth, purely decorative.
+    # Two tiles wide, two tall -- a doorway wider than the climber.
+    for _ in range(rng.randrange(1, 3)):
+        for _ in range(40):
+            p = rng.randrange(-1, 3)
+            top, fl = (22, 24) if p < 0 else (PLAT_ROWS[p] - 2, PLAT_ROWS[p])
+            c = rng.randrange(2, 17)
+            av = plat_avoid(p) if p >= 0 else [ladders[0]]
+            if any(abs(cc - b) < 2 for cc in (c, c + 1) for b in av):
+                continue
+            if any(grid[top][cc] != '.' or grid[top + 1][cc] != '.'
+                   for cc in (c, c + 1)):
+                continue
+            if any(TILES[tile_index(CHARMAP[grid[fl][cc]])][1] != SOLID
+                   for cc in (c, c + 1)):
+                continue
+            grid[top][c], grid[top][c + 1] = 'a', 'e'
+            grid[top + 1][c], grid[top + 1][c + 1] = 'c', 'q'
+            break
+
+    # a pipe out of one wall, along a ceiling, elbow, and down into
+    # the deck below -- scenic plumbing with corners
+    if rng.random() < 0.65:
+        for _ in range(30):
+            ceil = rng.choice((0, 6, 12, 18))
+            r = 2 if ceil == 0 else ceil + 2
+            fl = ceil + 6
+            n = rng.randrange(2, 5)
+            if rng.random() < 0.5:
+                cells = [(r, 1, 'f')]                         + [(r, 1 + s, 'i') for s in range(1, n)]                         + [(r, 1 + n, 'j')]
+                vcol = 1 + n
+            else:
+                cells = [(r, 18, 't')]                         + [(r, 18 - s, 'i') for s in range(1, n)]                         + [(r, 18 - n, 'k')]
+                vcol = 18 - n
+            cells += [(rr, vcol, 'p') for rr in range(r + 1, fl)]
+            if all(grid[rr][cc] == '.' for rr, cc, _ch in cells):
+                for rr, cc, ch in cells:
+                    grid[rr][cc] = ch
+                break
+
     # zone dressing + work lights (or vines) hanging under platforms
-    deco = {0: 'pgh', 1: 'vb', 2: 'pn'}[zone]
+    deco = {0: 'pghx', 1: 'vby', 2: 'pnxyz'}[zone]
     for _ in range(rng.randrange(10, 17)):
         c = rng.randrange(2, 18)
         r = rng.randrange(1, 23)
@@ -632,7 +739,8 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
 
     lines = [''.join(r) for r in grid]
     plan = {"ladders": ladders, "pairs": pairs, "gaps": gaps,
-            "keys_at": keys_at, "vaults": vaults, "switches": switches}
+            "keys_at": keys_at, "vaults": vaults, "switches": switches,
+            "obstacles": obstacles}
     return lines, plan
 
 
@@ -747,6 +855,9 @@ def verify(level, plan, entry_col, name, inventory=None, pressed=None):
                                 opened = True
                     if opened:
                         continue
+                if not probe(nx, y + 8, 4, 8) & SOLID:
+                    x = nx              # slide under the duct
+                    continue
                 return False
             x = nx
             for dc in (0, 1):
@@ -879,12 +990,15 @@ def generate_all():
     pending_below = []                   # (id, level): vaults awaiting
     next_sid = 0                         # their switch 1-3 levels up
     n_cross = n_vaults = n_keys = n_below = 0
+    obst_next = rng.randrange(4, 8)
     for zone, count in enumerate(ZONE_SIZE):
         first = 1 if zone == 0 else 0    # zone 0 includes hand-made L1
         for i in range(first, count):
             idx += 1
             has_elev = (idx % 10 == 0)   # lift stops: 10, 20, 30, 40, 50
             has_med = (idx >= 20 and idx % 9 == 2)  # meds: level 20 up
+            obst_next -= 1
+            has_obst = obst_next <= 0               # ducts: every 4-7
             spare_n = (rng.random() < (0.15, 0.35, 0.55)[zone]) + \
                       (zone == 2 and rng.random() < 0.3)
             # RED keys demand a pending vault switch each: constrain
@@ -957,7 +1071,8 @@ def generate_all():
                     lv, plan = gen_level(rng, zone, exit_col, i,
                                          has_elev, has_med,
                                          cross, spares, local_cols,
-                                         sow_switch, vids, below_vids)
+                                         sow_switch, vids, below_vids,
+                                         obstacle=has_obst)
                     verify(lv, plan, exit_col, f"L{idx}", inv_try, prs_try)
                     break
                 except AssertionError:
@@ -966,6 +1081,10 @@ def generate_all():
                 raise SystemExit(f"L{idx}: no completable layout found")
             inventory = inv_try
             pressed = prs_try
+            if has_obst:
+                # re-arm only when a duct actually landed; a crowded
+                # screen just pushes the attempt to the next level
+                obst_next = rng.randrange(4, 8) if plan["obstacles"] else 1
             used_vids = [v[0] for v in plan["vaults"] if v[4] == 0]
             switch_pool = [s for s in switch_pool if s not in used_vids]
             below_ids = {b[0] for b in pending_below}

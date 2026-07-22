@@ -234,6 +234,19 @@ fixed.
 | 28 | ![](docs/gfx/tile_28_switch_on.png) | `switch_on` | decor | The same switch after pressing (green, stays thrown all run) |
 | 29 | ![](docs/gfx/tile_29_vault.png) | `vault` | pickup (gated) | Sealed key safe, grounded at feet level; once its switch is thrown, the safe stays put and its red keycard appears on top of it — **and every vault holds a RED key: red keys exist nowhere else**. Stand on a sealed one and a blinking arrow over your head points the way to its switch — up or down the shaft |
 | 30 | ![](docs/gfx/tile_30_vent.png) | `vent` | hazard source | Steam nozzle, grounded; blasts a lethal column upward on its own 300 Hz-derived clock. One guards most switches |
+| 31 | ![](docs/gfx/tile_31_arch_tl.png) | `arch_tl` | decor | Corridor mouth, top-left quarter — the four `arch_*` tiles compose a 2×2 doorway into the depth of the complex, wider than the climber |
+| 32 | ![](docs/gfx/tile_32_arch_tr.png) | `arch_tr` | decor | Corridor mouth, top-right quarter (bevelled lintel, distant lamp) |
+| 33 | ![](docs/gfx/tile_33_arch_bl.png) | `arch_bl` | decor | Corridor mouth, bottom-left: the passage floor recedes to a point |
+| 34 | ![](docs/gfx/tile_34_arch_br.png) | `arch_br` | decor | Corridor mouth, bottom-right |
+| 35 | ![](docs/gfx/tile_35_painting_a.png) | `painting_a` | decor | Gilt-framed portrait of some forgotten director |
+| 36 | ![](docs/gfx/tile_36_painting_b.png) | `painting_b` | decor | Landscape: a sun over green hills nobody down here has seen |
+| 37 | ![](docs/gfx/tile_37_painting_c.png) | `painting_c` | decor | Abstract composition, boardroom-grade (Administrative keeps all three) |
+| 38 | ![](docs/gfx/tile_38_pipe_h.png) | `pipe_h` | decor | Horizontal pipe run along a ceiling |
+| 39 | ![](docs/gfx/tile_39_pipe_bl.png) | `pipe_bl` | decor | Pipe elbow: in from the left, down through the deck |
+| 40 | ![](docs/gfx/tile_40_pipe_br.png) | `pipe_br` | decor | Pipe elbow: in from the right, down through the deck |
+| 41 | ![](docs/gfx/tile_41_flange_l.png) | `flange_l` | decor | Collar where a pipe leaves the left wall |
+| 42 | ![](docs/gfx/tile_42_flange_r.png) | `flange_r` | decor | Collar where a pipe leaves the right wall |
+| 43 | ![](docs/gfx/tile_43_duct.png) | `duct` | **solid obstacle** | Hanging vent duct at head height, one every 4–7 levels: walking stops at it — duck or slide and crawl through the gap beneath (standing up under it is refused) |
 
 ### HUD & text — 8×8 glyphs, 1 bit/pixel, coloured per draw via `pen_left`
 

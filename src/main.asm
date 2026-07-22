@@ -607,6 +607,18 @@ ug_duck:
         ld a,1                  ; low profile: throwers' debris and
         ld (player_duck),a      ; crowbar swings pass over your head
 ug_move:
+        ld a,(player_x)         ; a duct overhead?  then you STAY low:
+        ld b,a                  ; standing up inside it is not on offer
+        ld a,(player_y)
+        ld c,a
+        ld d,SPR_W_BYTES
+        ld e,8                  ; just the head strip
+        call probe_level
+        rra
+        jr nc,ug_no_roof
+        ld a,2                  ; 2 = forced crouch: crawling allowed
+        ld (player_duck),a
+ug_no_roof:
         ld a,(slide_timer)      ; sliding: 2 bytes/frame burst in the
         or a                    ; facing direction, hitbox stays low
         jr z,ug_walk
@@ -618,9 +630,9 @@ ug_move:
         call slide_step
         jr ug_support
 ug_walk:
-        ld a,(player_duck)      ; ducking in place: no creeping
-        or a
-        jr nz,ug_support
+        ld a,(player_duck)      ; ducking in place: no creeping -- but
+        cp 1                    ; a FORCED crouch (duct overhead) may
+        jr z,ug_support         ; crawl on through
         call move_horizontal
 ug_support:
         call is_supported       ; is the ground still there?
@@ -837,8 +849,16 @@ solid_at_x:
         ld b,a
         ld a,(player_y)
         ld c,a
-        ld d,SPR_W_BYTES
         ld e,SPR_H_LINES
+        ld a,(player_duck)      ; crouched: only the low half collides,
+        or a                    ; so a head-height duct lets you under
+        jr z,sax_tall
+        ld a,c
+        add a,8
+        ld c,a
+        ld e,8
+sax_tall:
+        ld d,SPR_W_BYTES
         call probe_level        ; preserves BC (so B still holds x)
         rra                     ; TYPE_SOLID bit -> carry
         ld a,b
