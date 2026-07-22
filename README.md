@@ -177,17 +177,17 @@ OR data`), so it sits transparently over the tiles. Walkers come in
 facing pairs: the base label is frame A, frame B lives +128 bytes after
 it; `_r` looks right, `_l` is the tool-mirrored copy.
 
-| Sprite (labels) | Frames | Pens | What it is / how it animates |
-|---|---|---|---|
-| Mechanic walk `spr_mech_r`/`spr_mech_l` | 2 × 2 facings | 7 hard hat, 8 face+forward hand, 3 overalls, 2 boots | The player. Face and hand point the way he walks; legs apart/together alternate every 8 frames **only while moving**; frame B doubles as the mid-air stride pose |
-| Mechanic climb `spr_mech_climb` | 2 | 7 helmet, 8 hands, 3 back, 2 boots | Back view — he looks at the ladder. Hands swap high/low every 4 lines of height, so the cycle tracks real movement |
-| Mechanic duck `spr_mech_duck` | 1 | as walk | Crouch for duck/slide: art fills only the lower 8 lines, matching the halved hitbox |
-| Riot guard `spr_riot_r`/`spr_riot_l` | 2 × 2 facings | 2 helmet+shield, 1 visor, 3 armour | Slow patroller (a step every 4 frames). Visor and shield ride on the **facing** side; legs alternate every 8 frames |
-| Coat man `spr_coat_r`/`spr_coat_l` | 2 × 2 facings | 8 head, 3 long coat, 5 crowbar, 2 boots | Brisk patroller (a step every 2 frames). Crowbar carried forward, raised in frame B |
-| Thrower `spr_throw_a`/`_b` | 2 | 8 head/arms, 13 work shirt, 3 legs, 6 rock | Stationary; stands a platform above his victims. Frame B (arms up, rock overhead) shows for ~16 frames after each throw |
-| Debris `spr_rock` | 1 | 6 | What the thrower drops: falls 3 lines/frame, half-height (8 px) hitbox, shatters on the first solid |
-| Drips `spr_drip_red`/`_white` | 1 each | 5 / 1 | Lubricant from leaky ceiling pipes, falling 2 lines/frame. **Red hurts, white is water** — read the stain on the pipe |
-| Lasso rope | drawn, not stored | 7 | Not a sprite: `fill_rect` segments — a side line, a vertical line, or stepped 1×2 diagonal pieces, per the aim |
+| | Sprite (labels) | Frames | Pens | What it is / how it animates |
+|---|---|---|---|---|
+| ![](docs/gfx/spr_mech_walk.png) | Mechanic walk `spr_mech_r`/`spr_mech_l` | 2 × 2 facings | 7 hard hat, 8 face+forward hand, 3 overalls, 2 boots | The player. Face and hand point the way he walks; legs apart/together alternate every 8 frames **only while moving**; frame B doubles as the mid-air stride pose |
+| ![](docs/gfx/spr_mech_climb.png) | Mechanic climb `spr_mech_climb` | 2 | 7 helmet, 8 hands, 3 back, 2 boots | Back view — he looks at the ladder. Hands swap high/low every 4 lines of height, so the cycle tracks real movement |
+| ![](docs/gfx/spr_mech_duck.png) | Mechanic duck `spr_mech_duck` | 1 | as walk | Crouch for duck/slide: art fills only the lower 8 lines, matching the halved hitbox |
+| ![](docs/gfx/spr_riot.png) | Riot guard `spr_riot_r`/`spr_riot_l` | 2 × 2 facings | 2 helmet+shield, 1 visor, 3 armour | Slow patroller (a step every 4 frames). Visor and shield ride on the **facing** side; legs alternate every 8 frames |
+| ![](docs/gfx/spr_coat.png) | Coat man `spr_coat_r`/`spr_coat_l` | 2 × 2 facings | 8 head, 3 long coat, 5 crowbar, 2 boots | Brisk patroller (a step every 2 frames). Crowbar carried forward, raised in frame B |
+| ![](docs/gfx/spr_throw.png) | Thrower `spr_throw_a`/`_b` | 2 | 8 head/arms, 13 work shirt, 3 legs, 6 rock | Stationary; stands a platform above his victims. Frame B (arms up, rock overhead) shows for ~16 frames after each throw |
+| ![](docs/gfx/spr_rock.png) | Debris `spr_rock` | 1 | 6 | What the thrower drops: falls 3 lines/frame, half-height (8 px) hitbox, shatters on the first solid |
+| ![](docs/gfx/spr_drips.png) | Drips `spr_drip_red`/`_white` | 1 each | 5 / 1 | Lubricant from leaky ceiling pipes, falling 2 lines/frame. **Red hurts, white is water** — read the stain on the pipe |
+| | Lasso rope | drawn, not stored | 7 | Not a sprite: `fill_rect` segments — a side line, a vertical line, or stepped 1×2 diagonal pieces, per the aim |
 
 ### Background tiles — 8×8 px opaque (4 bytes × 8 lines, raw, 32 bytes each)
 
@@ -198,42 +198,42 @@ orange in Mechanical, green in Agricultural, blue in Administrative —
 ladders, crates and decor retint per zone while the player's pens stay
 fixed.
 
-| # | Tile | Collision | What it is |
-|---|---|---|---|
-| 0 | `empty` | walk-through | Black shaft air |
-| 1 | `wall` | SOLID | Riveted steel: the shaft's outer walls |
-| 2 | `slab` | SOLID | Platform deck plate, bright top edge, dark underside |
-| 3 | `floor` | SOLID | Bottom machine-deck floor with worn tread pattern |
-| 4 | `ladder` | LADDER | Rails + rungs (pen 6, so its colour is the zone's) |
-| 5 | `crate` | SOLID | X-braced crate; jump on it, hide behind nothing |
-| 6 | `pipe` | decor | Vertical coolant pipe with coupling bands |
-| 7 | `hazard` | decor | Diagonal warning stripes (deck corners, menu trim) |
-| 8–12 | `keycard_g/c/y/w/r` | pickup | Keycards in five colours (green, cyan, yellow, white, red); touch to pocket |
-| 13–17 | `door_g/c/y/w/r` | SOLID+DOOR | Security doors, 3 tiles tall (unjumpable); each opens only to its own colour and **stays open all run** |
-| 18 | `vine` | decor | Hydroponics growth, also hangs under Agricultural platforms |
-| 19 | `lamp` | decor | Work light hanging under platforms (Mech/Admin) |
-| 20 | `grate` | decor | Ventilation grate slats |
-| 21 | `bush` | decor | Hydroponic planter in an orange pot |
-| 22 | `panel` | decor | Wall terminal with scan-lined screen |
-| 23 | `elevator` | interactive | Lift door on stop levels (1, 10…50): stand here, Up/Down rides between visited stops |
-| 24 | `medkit` | pickup | Medical crate (white, red cross): 1–4 energy, overflow past 5 banks a life; levels 20+ only |
-| 25 | `leak_red` | hazard source | Ceiling pipe with a **red-stained** hole: drips lubricant that costs energy |
-| 26 | `leak_white` | decor source | Same pipe, clean drip — a harmless fake-out |
-| 27 | `switch_off` | interactive | Wall switch, red lever: touch to throw it and unseal its vault **on another level** |
-| 28 | `switch_on` | decor | The same switch after pressing (green, stays thrown all run) |
-| 29 | `vault` | pickup (gated) | Sealed key safe, grounded at feet level; once its switch is thrown it reloads as the keycard it guards |
+| # | | Tile | Collision | What it is |
+|---|---|---|---|---|
+| 0 | ![](docs/gfx/tile_00_empty.png) | `empty` | walk-through | Black shaft air |
+| 1 | ![](docs/gfx/tile_01_wall.png) | `wall` | SOLID | Riveted steel: the shaft's outer walls |
+| 2 | ![](docs/gfx/tile_02_slab.png) | `slab` | SOLID | Platform deck plate, bright top edge, dark underside |
+| 3 | ![](docs/gfx/tile_03_floor.png) | `floor` | SOLID | Bottom machine-deck floor with worn tread pattern |
+| 4 | ![](docs/gfx/tile_04_ladder.png) | `ladder` | LADDER | Rails + rungs (pen 6, so its colour is the zone's) |
+| 5 | ![](docs/gfx/tile_05_crate.png) | `crate` | SOLID | X-braced crate; jump on it, hide behind nothing |
+| 6 | ![](docs/gfx/tile_06_pipe.png) | `pipe` | decor | Vertical coolant pipe with coupling bands |
+| 7 | ![](docs/gfx/tile_07_hazard.png) | `hazard` | decor | Diagonal warning stripes (deck corners, menu trim) |
+| 8–12 | ![](docs/gfx/tile_08_keycard_g.png) ![](docs/gfx/tile_09_keycard_c.png) ![](docs/gfx/tile_10_keycard_y.png) ![](docs/gfx/tile_11_keycard_w.png) ![](docs/gfx/tile_12_keycard_r.png) | `keycard_g/c/y/w/r` | pickup | Keycards in five colours (green, cyan, yellow, white, red); touch to pocket |
+| 13–17 | ![](docs/gfx/tile_13_door_g.png) ![](docs/gfx/tile_14_door_c.png) ![](docs/gfx/tile_15_door_y.png) ![](docs/gfx/tile_16_door_w.png) ![](docs/gfx/tile_17_door_r.png) | `door_g/c/y/w/r` | SOLID+DOOR | Security doors, 3 tiles tall (unjumpable); each opens only to its own colour and **stays open all run** |
+| 18 | ![](docs/gfx/tile_18_vine.png) | `vine` | decor | Hydroponics growth, also hangs under Agricultural platforms |
+| 19 | ![](docs/gfx/tile_19_lamp.png) | `lamp` | decor | Work light hanging under platforms (Mech/Admin) |
+| 20 | ![](docs/gfx/tile_20_grate.png) | `grate` | decor | Ventilation grate slats |
+| 21 | ![](docs/gfx/tile_21_bush.png) | `bush` | decor | Hydroponic planter in an orange pot |
+| 22 | ![](docs/gfx/tile_22_panel.png) | `panel` | decor | Wall terminal with scan-lined screen |
+| 23 | ![](docs/gfx/tile_23_elevator.png) | `elevator` | interactive | Lift door on stop levels (1, 10…50): stand here, Up/Down rides between visited stops |
+| 24 | ![](docs/gfx/tile_24_medkit.png) | `medkit` | pickup | Medical crate (white, red cross): 1–4 energy, overflow past 5 banks a life; levels 20+ only |
+| 25 | ![](docs/gfx/tile_25_leak_red.png) | `leak_red` | hazard source | Ceiling pipe with a **red-stained** hole: drips lubricant that costs energy |
+| 26 | ![](docs/gfx/tile_26_leak_white.png) | `leak_white` | decor source | Same pipe, clean drip — a harmless fake-out |
+| 27 | ![](docs/gfx/tile_27_switch_off.png) | `switch_off` | interactive | Wall switch, red lever: touch to throw it and unseal its vault **on another level** |
+| 28 | ![](docs/gfx/tile_28_switch_on.png) | `switch_on` | decor | The same switch after pressing (green, stays thrown all run) |
+| 29 | ![](docs/gfx/tile_29_vault.png) | `vault` | pickup (gated) | Sealed key safe, grounded at feet level; once its switch is thrown it reloads as the keycard it guards |
 
 ### HUD & text — 8×8 glyphs, 1 bit/pixel, coloured per draw via `pen_left`
 
 41 glyphs: `0-9 A-Z - space` plus three icons. Glyphs 0–15 double as
 hex digits. Drawn 1× for the HUD, 2× (16×16) for the menu title.
 
-| Glyph | Where | Meaning |
-|---|---|---|
-| `KEY` (38) | HUD top-left, steel grey | Keycard icon; the five coloured digits after it count each colour held |
-| `HEART` (39) | HUD top-right, red | Lives (digit beside it) |
-| `BOLT` (40) | HUD right of centre, yellow | Energy 5…1 (digit beside it) |
-| digits | HUD top centre, white | Current level, 1–59, no leading zero |
+| | Glyph | Where | Meaning |
+|---|---|---|---|
+| ![](docs/gfx/glyph_key.png) | `KEY` (38) | HUD top-left, steel grey | Keycard icon; the five coloured digits after it count each colour held |
+| ![](docs/gfx/glyph_heart.png) | `HEART` (39) | HUD top-right, red | Lives (digit beside it) |
+| ![](docs/gfx/glyph_bolt.png) | `BOLT` (40) | HUD right of centre, yellow | Energy 5…1 (digit beside it) |
+| | digits | HUD top centre, white | Current level, 1–59, no leading zero |
 
 ### Why the erase code tracks two positions
 
