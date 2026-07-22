@@ -1553,7 +1553,7 @@ _i_spr_riot_r:
         or #04
         ld (hl),a
         inc hl
-        ld (hl),#48
+        ld (hl),#08
         inc hl
         ld (hl),#C0
         inc hl
@@ -1587,6 +1587,39 @@ _i_spr_riot_r:
         call spr_next_row
         ld a,(hl)
         and #AA
+        or #50
+        ld (hl),a
+        inc hl
+        ld (hl),#CC
+        inc hl
+        ld (hl),#8C
+        inc hl
+        ld a,(hl)
+        and #55
+        or #80
+        ld (hl),a
+        inc hl
+        call spr_next_row
+        ld (hl),#CC
+        inc hl
+        ld (hl),#CC
+        inc hl
+        ld (hl),#CC
+        inc hl
+        ld (hl),#48
+        inc hl
+        call spr_next_row
+        ld (hl),#CC
+        inc hl
+        ld (hl),#CC
+        inc hl
+        ld (hl),#CC
+        inc hl
+        ld (hl),#48
+        inc hl
+        call spr_next_row
+        ld a,(hl)
+        and #AA
         or #44
         ld (hl),a
         inc hl
@@ -1596,40 +1629,7 @@ _i_spr_riot_r:
         inc hl
         ld a,(hl)
         and #55
-        or #08
-        ld (hl),a
-        inc hl
-        call spr_next_row
-        ld (hl),#CC
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld (hl),#0C
-        inc hl
-        call spr_next_row
-        ld (hl),#CC
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld (hl),#0C
-        inc hl
-        call spr_next_row
-        ld a,(hl)
-        and #AA
-        or #44
-        ld (hl),a
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld (hl),#8C
-        inc hl
-        ld a,(hl)
-        and #55
-        or #08
+        or #80
         ld (hl),a
         inc hl
         call spr_next_row
@@ -1679,7 +1679,7 @@ _i_spr_riot_r:
         inc hl
         ld a,(hl)
         and #55
-        or #88
+        or #08
         ld (hl),a
         inc hl
         ld a,(hl)
@@ -1689,7 +1689,7 @@ _i_spr_riot_r:
         inc hl
         ld a,(hl)
         and #55
-        or #88
+        or #08
         ld (hl),a
         inc hl
         call spr_next_row
@@ -1742,7 +1742,7 @@ _i_spr_riot_r:
         inc hl
         ld a,(hl)
         and #55
-        or #08
+        or #80
         ld (hl),a
         inc hl
         ld a,(hl)
@@ -1752,7 +1752,7 @@ _i_spr_riot_r:
         inc hl
         ld a,(hl)
         and #55
-        or #08
+        or #80
         ld (hl),a
         inc hl
         ret
@@ -1785,7 +1785,7 @@ _i_spr_riot_r_b:
         or #04
         ld (hl),a
         inc hl
-        ld (hl),#48
+        ld (hl),#08
         inc hl
         ld (hl),#C0
         inc hl
@@ -1819,7 +1819,7 @@ _i_spr_riot_r_b:
         call spr_next_row
         ld a,(hl)
         and #AA
-        or #44
+        or #50
         ld (hl),a
         inc hl
         ld (hl),#CC
@@ -1828,7 +1828,7 @@ _i_spr_riot_r_b:
         inc hl
         ld a,(hl)
         and #55
-        or #08
+        or #80
         ld (hl),a
         inc hl
         call spr_next_row
@@ -1838,7 +1838,7 @@ _i_spr_riot_r_b:
         inc hl
         ld (hl),#CC
         inc hl
-        ld (hl),#0C
+        ld (hl),#48
         inc hl
         call spr_next_row
         ld (hl),#CC
@@ -1847,7 +1847,7 @@ _i_spr_riot_r_b:
         inc hl
         ld (hl),#CC
         inc hl
-        ld (hl),#0C
+        ld (hl),#48
         inc hl
         call spr_next_row
         ld a,(hl)
@@ -1861,7 +1861,7 @@ _i_spr_riot_r_b:
         inc hl
         ld a,(hl)
         and #55
-        or #08
+        or #80
         ld (hl),a
         inc hl
         call spr_next_row
@@ -1898,7 +1898,7 @@ _i_spr_riot_r_b:
         inc hl
         call spr_next_row
         inc hl
-        ld (hl),#CC
+        ld (hl),#8C
         inc hl
         ld a,(hl)
         and #AA
@@ -1907,7 +1907,7 @@ _i_spr_riot_r_b:
         inc hl
         ld a,(hl)
         and #55
-        or #88
+        or #08
         ld (hl),a
         inc hl
         call spr_next_row
@@ -1940,7 +1940,7 @@ _i_spr_riot_r_b:
         inc hl
         call spr_next_row
         inc hl
-        ld (hl),#0C
+        ld (hl),#48
         inc hl
         ld a,(hl)
         and #AA
@@ -1949,7 +1949,7 @@ _i_spr_riot_r_b:
         inc hl
         ld a,(hl)
         and #55
-        or #08
+        or #80
         ld (hl),a
         inc hl
         ret
@@ -1984,53 +1984,53 @@ _i_spr_riot_l:
         inc hl
         ld (hl),#C0
         inc hl
+        ld (hl),#04
+        inc hl
+        ld a,(hl)
+        and #55
+        or #08
+        ld (hl),a
+        inc hl
+        call spr_next_row
+        ld a,(hl)
+        and #AA
+        or #04
+        ld (hl),a
+        inc hl
+        ld (hl),#0C
+        inc hl
+        ld (hl),#0C
+        inc hl
+        ld a,(hl)
+        and #55
+        or #08
+        ld (hl),a
+        inc hl
+        call spr_next_row
+        inc hl
+        ld (hl),#CC
+        inc hl
+        ld (hl),#CC
+        inc hl
+        inc hl
+        call spr_next_row
+        ld a,(hl)
+        and #AA
+        or #40
+        ld (hl),a
+        inc hl
+        ld (hl),#4C
+        inc hl
+        ld (hl),#CC
+        inc hl
+        ld a,(hl)
+        and #55
+        or #A0
+        ld (hl),a
+        inc hl
+        call spr_next_row
         ld (hl),#84
         inc hl
-        ld a,(hl)
-        and #55
-        or #08
-        ld (hl),a
-        inc hl
-        call spr_next_row
-        ld a,(hl)
-        and #AA
-        or #04
-        ld (hl),a
-        inc hl
-        ld (hl),#0C
-        inc hl
-        ld (hl),#0C
-        inc hl
-        ld a,(hl)
-        and #55
-        or #08
-        ld (hl),a
-        inc hl
-        call spr_next_row
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld (hl),#CC
-        inc hl
-        inc hl
-        call spr_next_row
-        ld a,(hl)
-        and #AA
-        or #04
-        ld (hl),a
-        inc hl
-        ld (hl),#4C
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld a,(hl)
-        and #55
-        or #88
-        ld (hl),a
-        inc hl
-        call spr_next_row
-        ld (hl),#0C
-        inc hl
         ld (hl),#CC
         inc hl
         ld (hl),#CC
@@ -2038,7 +2038,7 @@ _i_spr_riot_l:
         ld (hl),#CC
         inc hl
         call spr_next_row
-        ld (hl),#0C
+        ld (hl),#84
         inc hl
         ld (hl),#CC
         inc hl
@@ -2049,7 +2049,7 @@ _i_spr_riot_l:
         call spr_next_row
         ld a,(hl)
         and #AA
-        or #04
+        or #40
         ld (hl),a
         inc hl
         ld (hl),#4C
@@ -2103,6 +2103,27 @@ _i_spr_riot_l:
         call spr_next_row
         ld a,(hl)
         and #AA
+        or #04
+        ld (hl),a
+        inc hl
+        ld a,(hl)
+        and #55
+        or #88
+        ld (hl),a
+        inc hl
+        ld a,(hl)
+        and #AA
+        or #04
+        ld (hl),a
+        inc hl
+        ld a,(hl)
+        and #55
+        or #88
+        ld (hl),a
+        inc hl
+        call spr_next_row
+        ld a,(hl)
+        and #AA
         or #44
         ld (hl),a
         inc hl
@@ -2124,27 +2145,6 @@ _i_spr_riot_l:
         call spr_next_row
         ld a,(hl)
         and #AA
-        or #44
-        ld (hl),a
-        inc hl
-        ld a,(hl)
-        and #55
-        or #88
-        ld (hl),a
-        inc hl
-        ld a,(hl)
-        and #AA
-        or #44
-        ld (hl),a
-        inc hl
-        ld a,(hl)
-        and #55
-        or #88
-        ld (hl),a
-        inc hl
-        call spr_next_row
-        ld a,(hl)
-        and #AA
         or #04
         ld (hl),a
         inc hl
@@ -2166,7 +2166,7 @@ _i_spr_riot_l:
         call spr_next_row
         ld a,(hl)
         and #AA
-        or #04
+        or #40
         ld (hl),a
         inc hl
         ld a,(hl)
@@ -2176,7 +2176,7 @@ _i_spr_riot_l:
         inc hl
         ld a,(hl)
         and #AA
-        or #04
+        or #40
         ld (hl),a
         inc hl
         ld a,(hl)
@@ -2216,53 +2216,53 @@ _i_spr_riot_l_b:
         inc hl
         ld (hl),#C0
         inc hl
+        ld (hl),#04
+        inc hl
+        ld a,(hl)
+        and #55
+        or #08
+        ld (hl),a
+        inc hl
+        call spr_next_row
+        ld a,(hl)
+        and #AA
+        or #04
+        ld (hl),a
+        inc hl
+        ld (hl),#0C
+        inc hl
+        ld (hl),#0C
+        inc hl
+        ld a,(hl)
+        and #55
+        or #08
+        ld (hl),a
+        inc hl
+        call spr_next_row
+        inc hl
+        ld (hl),#CC
+        inc hl
+        ld (hl),#CC
+        inc hl
+        inc hl
+        call spr_next_row
+        ld a,(hl)
+        and #AA
+        or #40
+        ld (hl),a
+        inc hl
+        ld (hl),#4C
+        inc hl
+        ld (hl),#CC
+        inc hl
+        ld a,(hl)
+        and #55
+        or #A0
+        ld (hl),a
+        inc hl
+        call spr_next_row
         ld (hl),#84
         inc hl
-        ld a,(hl)
-        and #55
-        or #08
-        ld (hl),a
-        inc hl
-        call spr_next_row
-        ld a,(hl)
-        and #AA
-        or #04
-        ld (hl),a
-        inc hl
-        ld (hl),#0C
-        inc hl
-        ld (hl),#0C
-        inc hl
-        ld a,(hl)
-        and #55
-        or #08
-        ld (hl),a
-        inc hl
-        call spr_next_row
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld (hl),#CC
-        inc hl
-        inc hl
-        call spr_next_row
-        ld a,(hl)
-        and #AA
-        or #04
-        ld (hl),a
-        inc hl
-        ld (hl),#4C
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld a,(hl)
-        and #55
-        or #88
-        ld (hl),a
-        inc hl
-        call spr_next_row
-        ld (hl),#0C
-        inc hl
         ld (hl),#CC
         inc hl
         ld (hl),#CC
@@ -2270,7 +2270,7 @@ _i_spr_riot_l_b:
         ld (hl),#CC
         inc hl
         call spr_next_row
-        ld (hl),#0C
+        ld (hl),#84
         inc hl
         ld (hl),#CC
         inc hl
@@ -2281,7 +2281,7 @@ _i_spr_riot_l_b:
         call spr_next_row
         ld a,(hl)
         and #AA
-        or #04
+        or #40
         ld (hl),a
         inc hl
         ld (hl),#4C
@@ -2328,7 +2328,7 @@ _i_spr_riot_l_b:
         call spr_next_row
         ld a,(hl)
         and #AA
-        or #44
+        or #04
         ld (hl),a
         inc hl
         ld a,(hl)
@@ -2336,7 +2336,7 @@ _i_spr_riot_l_b:
         or #88
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#4C
         inc hl
         inc hl
         call spr_next_row
@@ -2370,7 +2370,7 @@ _i_spr_riot_l_b:
         call spr_next_row
         ld a,(hl)
         and #AA
-        or #04
+        or #40
         ld (hl),a
         inc hl
         ld a,(hl)
@@ -2378,54 +2378,54 @@ _i_spr_riot_l_b:
         or #08
         ld (hl),a
         inc hl
-        ld (hl),#0C
+        ld (hl),#84
         inc hl
         inc hl
         ret
 
 _i_spr_coat_r:
         inc hl
-        ld (hl),#03
+        ld (hl),#0C
         inc hl
-        ld (hl),#03
-        inc hl
-        inc hl
-        call spr_next_row
-        inc hl
-        ld (hl),#03
-        inc hl
-        ld (hl),#03
+        ld (hl),#0C
         inc hl
         inc hl
         call spr_next_row
         ld a,(hl)
         and #AA
-        or #44
+        or #04
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#03
         inc hl
-        ld (hl),#CC
+        ld (hl),#03
         inc hl
         ld a,(hl)
         and #55
-        or #88
+        or #02
         ld (hl),a
         inc hl
         call spr_next_row
         ld a,(hl)
         and #AA
-        or #44
+        or #04
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#02
         inc hl
-        ld (hl),#CC
+        ld (hl),#00
         inc hl
         ld a,(hl)
         and #55
-        or #88
+        or #02
         ld (hl),a
+        inc hl
+        call spr_next_row
+        inc hl
+        ld (hl),#03
+        inc hl
+        ld (hl),#03
+        inc hl
         inc hl
         call spr_next_row
         ld a,(hl)
@@ -2457,13 +2457,13 @@ _i_spr_coat_r:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#C8
         inc hl
         ld (hl),#CC
         inc hl
         ld a,(hl)
-        and #55
-        or #88
+        and #AA
+        or #50
         ld (hl),a
         inc hl
         call spr_next_row
@@ -2487,7 +2487,7 @@ _i_spr_coat_r:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#C8
         inc hl
         ld (hl),#CC
         inc hl
@@ -2502,9 +2502,9 @@ _i_spr_coat_r:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#0C
         inc hl
-        ld (hl),#CC
+        ld (hl),#0C
         inc hl
         ld a,(hl)
         and #55
@@ -2602,9 +2602,9 @@ _i_spr_coat_r:
 
 _i_spr_coat_r_b:
         inc hl
-        ld (hl),#03
+        ld (hl),#0C
         inc hl
-        ld (hl),#03
+        ld (hl),#0C
         inc hl
         ld a,(hl)
         and #AA
@@ -2612,6 +2612,10 @@ _i_spr_coat_r_b:
         ld (hl),a
         inc hl
         call spr_next_row
+        ld a,(hl)
+        and #AA
+        or #04
+        ld (hl),a
         inc hl
         ld (hl),#03
         inc hl
@@ -2625,17 +2629,24 @@ _i_spr_coat_r_b:
         call spr_next_row
         ld a,(hl)
         and #AA
-        or #44
+        or #04
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#02
         inc hl
-        ld (hl),#CC
+        ld (hl),#00
         inc hl
         ld a,(hl)
         and #55
-        or #88
+        or #02
         ld (hl),a
+        inc hl
+        call spr_next_row
+        inc hl
+        ld (hl),#03
+        inc hl
+        ld (hl),#03
+        inc hl
         inc hl
         call spr_next_row
         ld a,(hl)
@@ -2673,7 +2684,7 @@ _i_spr_coat_r_b:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#C8
         inc hl
         ld (hl),#CC
         inc hl
@@ -2703,7 +2714,7 @@ _i_spr_coat_r_b:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#C8
         inc hl
         ld (hl),#CC
         inc hl
@@ -2718,24 +2729,9 @@ _i_spr_coat_r_b:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#0C
         inc hl
-        ld (hl),#CC
-        inc hl
-        ld a,(hl)
-        and #55
-        or #88
-        ld (hl),a
-        inc hl
-        call spr_next_row
-        ld a,(hl)
-        and #AA
-        or #44
-        ld (hl),a
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld (hl),#CC
+        ld (hl),#0C
         inc hl
         ld a,(hl)
         and #55
@@ -2797,47 +2793,47 @@ _i_spr_coat_r_b:
 
 _i_spr_coat_l:
         inc hl
-        ld (hl),#03
+        ld (hl),#0C
         inc hl
-        ld (hl),#03
-        inc hl
-        inc hl
-        call spr_next_row
-        inc hl
-        ld (hl),#03
-        inc hl
-        ld (hl),#03
+        ld (hl),#0C
         inc hl
         inc hl
         call spr_next_row
         ld a,(hl)
         and #AA
-        or #44
+        or #01
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#03
         inc hl
-        ld (hl),#CC
+        ld (hl),#03
         inc hl
         ld a,(hl)
         and #55
-        or #88
+        or #08
         ld (hl),a
         inc hl
         call spr_next_row
         ld a,(hl)
         and #AA
-        or #44
+        or #01
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#00
         inc hl
-        ld (hl),#CC
+        ld (hl),#01
         inc hl
         ld a,(hl)
         and #55
-        or #88
+        or #08
         ld (hl),a
+        inc hl
+        call spr_next_row
+        inc hl
+        ld (hl),#03
+        inc hl
+        ld (hl),#03
+        inc hl
         inc hl
         call spr_next_row
         ld (hl),#E4
@@ -2865,13 +2861,13 @@ _i_spr_coat_l:
         inc hl
         call spr_next_row
         ld a,(hl)
-        and #AA
-        or #44
+        and #55
+        or #A0
         ld (hl),a
         inc hl
         ld (hl),#CC
         inc hl
-        ld (hl),#CC
+        ld (hl),#C4
         inc hl
         ld a,(hl)
         and #55
@@ -2901,7 +2897,7 @@ _i_spr_coat_l:
         inc hl
         ld (hl),#CC
         inc hl
-        ld (hl),#CC
+        ld (hl),#C4
         inc hl
         ld a,(hl)
         and #55
@@ -2914,9 +2910,9 @@ _i_spr_coat_l:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#0C
         inc hl
-        ld (hl),#CC
+        ld (hl),#0C
         inc hl
         ld a,(hl)
         and #55
@@ -3018,9 +3014,9 @@ _i_spr_coat_l_b:
         or #A0
         ld (hl),a
         inc hl
-        ld (hl),#03
+        ld (hl),#0C
         inc hl
-        ld (hl),#03
+        ld (hl),#0C
         inc hl
         inc hl
         call spr_next_row
@@ -3033,6 +3029,32 @@ _i_spr_coat_l_b:
         inc hl
         ld (hl),#03
         inc hl
+        ld a,(hl)
+        and #55
+        or #08
+        ld (hl),a
+        inc hl
+        call spr_next_row
+        ld a,(hl)
+        and #AA
+        or #01
+        ld (hl),a
+        inc hl
+        ld (hl),#00
+        inc hl
+        ld (hl),#01
+        inc hl
+        ld a,(hl)
+        and #55
+        or #08
+        ld (hl),a
+        inc hl
+        call spr_next_row
+        inc hl
+        ld (hl),#03
+        inc hl
+        ld (hl),#03
+        inc hl
         inc hl
         call spr_next_row
         ld a,(hl)
@@ -3072,7 +3094,7 @@ _i_spr_coat_l_b:
         inc hl
         ld (hl),#CC
         inc hl
-        ld (hl),#CC
+        ld (hl),#C4
         inc hl
         ld a,(hl)
         and #55
@@ -3102,7 +3124,7 @@ _i_spr_coat_l_b:
         inc hl
         ld (hl),#CC
         inc hl
-        ld (hl),#CC
+        ld (hl),#C4
         inc hl
         ld a,(hl)
         and #55
@@ -3115,39 +3137,9 @@ _i_spr_coat_l_b:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#0C
         inc hl
-        ld (hl),#CC
-        inc hl
-        ld a,(hl)
-        and #55
-        or #88
-        ld (hl),a
-        inc hl
-        call spr_next_row
-        ld a,(hl)
-        and #AA
-        or #44
-        ld (hl),a
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld a,(hl)
-        and #55
-        or #88
-        ld (hl),a
-        inc hl
-        call spr_next_row
-        ld a,(hl)
-        and #AA
-        or #44
-        ld (hl),a
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld (hl),#CC
+        ld (hl),#0C
         inc hl
         ld a,(hl)
         and #55
@@ -3214,9 +3206,16 @@ _i_spr_throw_a:
         inc hl
         call spr_next_row
         inc hl
-        ld (hl),#03
+        ld (hl),#F0
         inc hl
-        ld (hl),#03
+        ld (hl),#F0
+        inc hl
+        inc hl
+        call spr_next_row
+        inc hl
+        ld (hl),#02
+        inc hl
+        ld (hl),#01
         inc hl
         inc hl
         call spr_next_row
@@ -3262,24 +3261,9 @@ _i_spr_throw_a:
         or #51
         ld (hl),a
         inc hl
-        ld (hl),#F3
+        ld (hl),#0C
         inc hl
-        ld (hl),#F3
-        inc hl
-        ld a,(hl)
-        and #55
-        or #A2
-        ld (hl),a
-        inc hl
-        call spr_next_row
-        ld a,(hl)
-        and #AA
-        or #51
-        ld (hl),a
-        inc hl
-        ld (hl),#F3
-        inc hl
-        ld (hl),#F3
+        ld (hl),#0C
         inc hl
         ld a,(hl)
         and #55
@@ -3430,8 +3414,9 @@ _i_spr_throw_a:
 
 _i_spr_throw_b:
         inc hl
-        ld (hl),#3C
+        ld (hl),#0C
         inc hl
+        ld (hl),#0C
         inc hl
         inc hl
         call spr_next_row
@@ -3440,22 +3425,9 @@ _i_spr_throw_b:
         or #01
         ld (hl),a
         inc hl
+        ld (hl),#0C
         inc hl
-        inc hl
-        ld a,(hl)
-        and #55
-        or #02
-        ld (hl),a
-        inc hl
-        call spr_next_row
-        ld a,(hl)
-        and #AA
-        or #01
-        ld (hl),a
-        inc hl
-        ld (hl),#03
-        inc hl
-        ld (hl),#03
+        ld (hl),#0C
         inc hl
         ld a,(hl)
         and #55
@@ -3463,19 +3435,18 @@ _i_spr_throw_b:
         ld (hl),a
         inc hl
         call spr_next_row
-        ld a,(hl)
-        and #AA
-        or #51
-        ld (hl),a
         inc hl
-        ld (hl),#F3
+        ld (hl),#F0
         inc hl
-        ld (hl),#F3
+        ld (hl),#F0
         inc hl
-        ld a,(hl)
-        and #55
-        or #A2
-        ld (hl),a
+        inc hl
+        call spr_next_row
+        inc hl
+        ld (hl),#02
+        inc hl
+        ld (hl),#01
+        inc hl
         inc hl
         call spr_next_row
         ld a,(hl)
@@ -3513,9 +3484,9 @@ _i_spr_throw_b:
         or #51
         ld (hl),a
         inc hl
-        ld (hl),#F3
+        ld (hl),#0C
         inc hl
-        ld (hl),#F3
+        ld (hl),#0C
         inc hl
         ld a,(hl)
         and #55
