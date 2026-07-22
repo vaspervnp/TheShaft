@@ -114,7 +114,7 @@ _i_spr_mech_r:
         inc hl
         ld a,(hl)
         and #55
-        or #A8
+        or #80
         ld (hl),a
         inc hl
         call spr_next_row
@@ -133,14 +133,10 @@ _i_spr_mech_r:
         ld (hl),a
         inc hl
         call spr_next_row
-        ld a,(hl)
-        and #AA
-        or #54
-        ld (hl),a
         inc hl
-        ld (hl),#FC
+        ld (hl),#A9
         inc hl
-        ld (hl),#03
+        ld (hl),#02
         inc hl
         ld a,(hl)
         and #55
@@ -156,9 +152,9 @@ _i_spr_mech_r:
         inc hl
         call spr_next_row
         inc hl
-        ld (hl),#CC
+        ld (hl),#F0
         inc hl
-        ld (hl),#CC
+        ld (hl),#F0
         inc hl
         inc hl
         call spr_next_row
@@ -167,9 +163,9 @@ _i_spr_mech_r:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#EC
         inc hl
-        ld (hl),#CC
+        ld (hl),#DC
         inc hl
         ld a,(hl)
         and #55
@@ -182,33 +178,21 @@ _i_spr_mech_r:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#EC
         inc hl
-        ld (hl),#CC
+        ld (hl),#DC
         inc hl
-        ld (hl),#89
-        inc hl
-        call spr_next_row
         ld a,(hl)
-        and #AA
-        or #44
+        and #55
+        or #02
         ld (hl),a
         inc hl
-        ld (hl),#CC
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld (hl),#89
-        inc hl
         call spr_next_row
-        ld a,(hl)
-        and #AA
-        or #44
-        ld (hl),a
+        ld (hl),#46
         inc hl
-        ld (hl),#CC
+        ld (hl),#EC
         inc hl
-        ld (hl),#CC
+        ld (hl),#DC
         inc hl
         ld a,(hl)
         and #55
@@ -221,14 +205,21 @@ _i_spr_mech_r:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#0C
         inc hl
-        ld (hl),#CC
+        ld (hl),#AC
         inc hl
         ld a,(hl)
         and #55
         or #88
         ld (hl),a
+        inc hl
+        call spr_next_row
+        inc hl
+        ld (hl),#CC
+        inc hl
+        ld (hl),#CC
+        inc hl
         inc hl
         call spr_next_row
         ld a,(hl)
@@ -356,7 +347,7 @@ _i_spr_mech_r_b:
         inc hl
         ld a,(hl)
         and #55
-        or #A8
+        or #80
         ld (hl),a
         inc hl
         call spr_next_row
@@ -375,14 +366,10 @@ _i_spr_mech_r_b:
         ld (hl),a
         inc hl
         call spr_next_row
-        ld a,(hl)
-        and #AA
-        or #54
-        ld (hl),a
         inc hl
-        ld (hl),#FC
+        ld (hl),#A9
         inc hl
-        ld (hl),#03
+        ld (hl),#02
         inc hl
         ld a,(hl)
         and #55
@@ -398,9 +385,9 @@ _i_spr_mech_r_b:
         inc hl
         call spr_next_row
         inc hl
-        ld (hl),#CC
+        ld (hl),#F0
         inc hl
-        ld (hl),#CC
+        ld (hl),#F0
         inc hl
         inc hl
         call spr_next_row
@@ -409,9 +396,9 @@ _i_spr_mech_r_b:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#EC
         inc hl
-        ld (hl),#CC
+        ld (hl),#DC
         inc hl
         ld a,(hl)
         and #55
@@ -424,33 +411,9 @@ _i_spr_mech_r_b:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#EC
         inc hl
-        ld (hl),#CC
-        inc hl
-        ld (hl),#89
-        inc hl
-        call spr_next_row
-        ld a,(hl)
-        and #AA
-        or #44
-        ld (hl),a
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld (hl),#89
-        inc hl
-        call spr_next_row
-        ld a,(hl)
-        and #AA
-        or #44
-        ld (hl),a
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld (hl),#CC
+        ld (hl),#DC
         inc hl
         ld a,(hl)
         and #55
@@ -463,14 +426,36 @@ _i_spr_mech_r_b:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#EC
         inc hl
-        ld (hl),#CC
+        ld (hl),#DC
         inc hl
         ld a,(hl)
         and #55
         or #88
         ld (hl),a
+        inc hl
+        call spr_next_row
+        ld a,(hl)
+        and #AA
+        or #44
+        ld (hl),a
+        inc hl
+        ld (hl),#0C
+        inc hl
+        ld (hl),#AC
+        inc hl
+        ld a,(hl)
+        and #55
+        or #88
+        ld (hl),a
+        inc hl
+        call spr_next_row
+        inc hl
+        ld (hl),#CC
+        inc hl
+        ld (hl),#CC
+        inc hl
         inc hl
         call spr_next_row
         inc hl
@@ -519,7 +504,7 @@ _i_spr_mech_l:
         call spr_next_row
         ld a,(hl)
         and #AA
-        or #54
+        or #40
         ld (hl),a
         inc hl
         ld (hl),#FC
@@ -552,14 +537,10 @@ _i_spr_mech_l:
         or #01
         ld (hl),a
         inc hl
-        ld (hl),#03
+        ld (hl),#01
         inc hl
-        ld (hl),#FC
+        ld (hl),#56
         inc hl
-        ld a,(hl)
-        and #55
-        or #A8
-        ld (hl),a
         inc hl
         call spr_next_row
         inc hl
@@ -570,9 +551,9 @@ _i_spr_mech_l:
         inc hl
         call spr_next_row
         inc hl
-        ld (hl),#CC
+        ld (hl),#F0
         inc hl
-        ld (hl),#CC
+        ld (hl),#F0
         inc hl
         inc hl
         call spr_next_row
@@ -581,21 +562,9 @@ _i_spr_mech_l:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#EC
         inc hl
-        ld (hl),#CC
-        inc hl
-        ld a,(hl)
-        and #55
-        or #88
-        ld (hl),a
-        inc hl
-        call spr_next_row
-        ld (hl),#46
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld (hl),#CC
+        ld (hl),#DC
         inc hl
         ld a,(hl)
         and #55
@@ -603,11 +572,14 @@ _i_spr_mech_l:
         ld (hl),a
         inc hl
         call spr_next_row
-        ld (hl),#46
+        ld a,(hl)
+        and #AA
+        or #01
+        ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#EC
         inc hl
-        ld (hl),#CC
+        ld (hl),#DC
         inc hl
         ld a,(hl)
         and #55
@@ -620,14 +592,11 @@ _i_spr_mech_l:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#EC
         inc hl
-        ld (hl),#CC
+        ld (hl),#DC
         inc hl
-        ld a,(hl)
-        and #55
-        or #88
-        ld (hl),a
+        ld (hl),#89
         inc hl
         call spr_next_row
         ld a,(hl)
@@ -635,14 +604,21 @@ _i_spr_mech_l:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#5C
         inc hl
-        ld (hl),#CC
+        ld (hl),#0C
         inc hl
         ld a,(hl)
         and #55
         or #88
         ld (hl),a
+        inc hl
+        call spr_next_row
+        inc hl
+        ld (hl),#CC
+        inc hl
+        ld (hl),#CC
+        inc hl
         inc hl
         call spr_next_row
         ld a,(hl)
@@ -761,7 +737,7 @@ _i_spr_mech_l_b:
         call spr_next_row
         ld a,(hl)
         and #AA
-        or #54
+        or #40
         ld (hl),a
         inc hl
         ld (hl),#FC
@@ -794,14 +770,10 @@ _i_spr_mech_l_b:
         or #01
         ld (hl),a
         inc hl
-        ld (hl),#03
+        ld (hl),#01
         inc hl
-        ld (hl),#FC
+        ld (hl),#56
         inc hl
-        ld a,(hl)
-        and #55
-        or #A8
-        ld (hl),a
         inc hl
         call spr_next_row
         inc hl
@@ -812,9 +784,9 @@ _i_spr_mech_l_b:
         inc hl
         call spr_next_row
         inc hl
-        ld (hl),#CC
+        ld (hl),#F0
         inc hl
-        ld (hl),#CC
+        ld (hl),#F0
         inc hl
         inc hl
         call spr_next_row
@@ -823,33 +795,9 @@ _i_spr_mech_l_b:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#EC
         inc hl
-        ld (hl),#CC
-        inc hl
-        ld a,(hl)
-        and #55
-        or #88
-        ld (hl),a
-        inc hl
-        call spr_next_row
-        ld (hl),#46
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld a,(hl)
-        and #55
-        or #88
-        ld (hl),a
-        inc hl
-        call spr_next_row
-        ld (hl),#46
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld (hl),#CC
+        ld (hl),#DC
         inc hl
         ld a,(hl)
         and #55
@@ -862,9 +810,9 @@ _i_spr_mech_l_b:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#EC
         inc hl
-        ld (hl),#CC
+        ld (hl),#DC
         inc hl
         ld a,(hl)
         and #55
@@ -877,14 +825,36 @@ _i_spr_mech_l_b:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#EC
         inc hl
-        ld (hl),#CC
+        ld (hl),#DC
         inc hl
         ld a,(hl)
         and #55
         or #88
         ld (hl),a
+        inc hl
+        call spr_next_row
+        ld a,(hl)
+        and #AA
+        or #44
+        ld (hl),a
+        inc hl
+        ld (hl),#5C
+        inc hl
+        ld (hl),#0C
+        inc hl
+        ld a,(hl)
+        and #55
+        or #88
+        ld (hl),a
+        inc hl
+        call spr_next_row
+        inc hl
+        ld (hl),#CC
+        inc hl
+        ld (hl),#CC
+        inc hl
         inc hl
         call spr_next_row
         inc hl
@@ -970,9 +940,9 @@ _i_spr_mech_climb:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#EC
         inc hl
-        ld (hl),#CC
+        ld (hl),#DC
         inc hl
         ld a,(hl)
         and #55
@@ -980,11 +950,19 @@ _i_spr_mech_climb:
         ld (hl),a
         inc hl
         call spr_next_row
+        ld a,(hl)
+        and #AA
+        or #44
+        ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#0C
         inc hl
-        ld (hl),#CC
+        ld (hl),#0C
         inc hl
+        ld a,(hl)
+        and #55
+        or #88
+        ld (hl),a
         inc hl
         call spr_next_row
         ld a,(hl)
@@ -992,9 +970,9 @@ _i_spr_mech_climb:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#0C
         inc hl
-        ld (hl),#CC
+        ld (hl),#0C
         inc hl
         ld a,(hl)
         and #55
@@ -1201,9 +1179,9 @@ _i_spr_mech_climb_b:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#EC
         inc hl
-        ld (hl),#CC
+        ld (hl),#DC
         inc hl
         ld a,(hl)
         and #55
@@ -1211,11 +1189,19 @@ _i_spr_mech_climb_b:
         ld (hl),a
         inc hl
         call spr_next_row
+        ld a,(hl)
+        and #AA
+        or #44
+        ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#0C
         inc hl
-        ld (hl),#CC
+        ld (hl),#0C
         inc hl
+        ld a,(hl)
+        and #55
+        or #88
+        ld (hl),a
         inc hl
         call spr_next_row
         ld a,(hl)
@@ -1223,9 +1209,9 @@ _i_spr_mech_climb_b:
         or #44
         ld (hl),a
         inc hl
-        ld (hl),#CC
+        ld (hl),#0C
         inc hl
-        ld (hl),#CC
+        ld (hl),#0C
         inc hl
         ld a,(hl)
         and #55
@@ -1444,7 +1430,7 @@ _i_spr_mech_duck:
         inc hl
         ld a,(hl)
         and #55
-        or #A8
+        or #80
         ld (hl),a
         inc hl
         call spr_next_row
@@ -1455,7 +1441,7 @@ _i_spr_mech_duck:
         inc hl
         ld (hl),#03
         inc hl
-        ld (hl),#03
+        ld (hl),#01
         inc hl
         ld a,(hl)
         and #55
@@ -1478,13 +1464,13 @@ _i_spr_mech_duck:
         ld (hl),a
         inc hl
         call spr_next_row
-        ld (hl),#CC
+        ld (hl),#46
         inc hl
-        ld (hl),#CC
+        ld (hl),#EC
         inc hl
-        ld (hl),#CC
+        ld (hl),#DC
         inc hl
-        ld (hl),#CC
+        ld (hl),#89
         inc hl
         call spr_next_row
         ld (hl),#CC
