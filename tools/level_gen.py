@@ -918,6 +918,19 @@ def generate_all():
                         others[0] if others else 0
                 else:
                     avail -= 1
+            # the LAST stretch drains the red surplus the vault
+            # economy builds up: fill the level's spare door slots
+            # with red while the walkthrough still holds spare red
+            # cards (floor of 2 in both pool and bag, so no ordering
+            # of door-opening can strand the player)
+            if idx >= 44:
+                room = 3 - len(cross) - len(local_cols)
+                extra = 0
+                while extra < room and spare_pool[4] > 2 \
+                      and inventory[4] - extra > 2:
+                    cross.append(4)
+                    spare_pool[4] -= 1
+                    extra += 1
             n_red = spares.count(4) + (1 if 4 in local_cols else 0)
             # BELOW-stream: sow a sealed vault whose switch comes
             # 1-3 levels later (about half of all vaults)
@@ -983,7 +996,8 @@ def generate_all():
     print(f"key economy: {n_cross} cross-level doors, {n_vaults} of "
           f"{n_keys} keys vaulted ({100*n_vaults//max(1,n_keys)}%), "
           f"{n_below} vaults BELOW their switch, "
-          f"{next_sid} switch ids, {sum(spare_pool)} spares left",
+          f"{next_sid} switch ids, {sum(spare_pool)} spares left, "
+          f"final bag {inventory}",
           file=sys.stderr)
     return levels, plans
 

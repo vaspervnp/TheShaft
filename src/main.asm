@@ -1966,6 +1966,29 @@ lld_next:
 lld_done:
         ld a,c
         ld (door_count),a
+        ; a crate eaten on an earlier visit never re-appears: there is
+        ; at most one per level, so find the tile and lift it out
+        ld a,(current_level)
+        dec a
+        ld hl,taken_meds
+        call bit_locate
+        ld a,(hl)
+        and b
+        ret z                   ; still out there
+        ld hl,level_buffer
+        ld bc,768
+mkw_scan:
+        ld a,(hl)
+        cp TILE_MEDKIT
+        jr z,mkw_hit
+        inc hl
+        dec bc
+        ld a,b
+        or c
+        jr nz,mkw_scan
+        ret                     ; (no crate on this level after all)
+mkw_hit:
+        ld (hl),TILE_EMPTY
         ret
 
 ; ----------------------------------------------------------------------
@@ -2331,6 +2354,21 @@ game_win:
         ld b,6
         ld c,120
         ld e,2
+        call both_text
+        ld hl,score             ; stamp the climb's worth into the line
+        ld de,txt_score+6
+        ld b,4
+gw_sd:
+        ld a,(hl)
+        add a,'0'
+        ld (de),a
+        inc hl
+        inc de
+        djnz gw_sd
+        ld hl,txt_score
+        ld b,20                 ; 10 chars x 4 bytes, centred
+        ld c,144
+        ld e,10
         call both_text
         ld hl,txt_end_3b
         ld b,20
@@ -3454,7 +3492,9 @@ ck_cell:                        ; keycards and medkits, by tile index
         pop de
         pop hl
         call key_find           ; this exact key, remembered gone
-        call c,key_mark
+        push hl                 ; (key_mark re-aims HL at the ledger --
+        call c,key_mark         ;  ck_took still needs the map cell!)
+        pop hl
         ld a,2                  ; +2 for the pocketed card
         call score_add
         jp ck_took
@@ -3586,6 +3626,13 @@ ck_not_switch:
         ret nz
         ; a medical crate: 1-4 energy, spill-over banks a life
         push hl
+        ld a,(current_level)    ; crates are one-shots: bit per level
+        dec a
+        ld hl,taken_meds
+        call bit_locate
+        ld a,(hl)
+        or b
+        ld (hl),a
         ld a,(frame_ctr)
         and 3
         inc a                   ; 1..4 points, luck of the frame
@@ -4137,10 +4184,10 @@ ms_blink:
         ld (switch_state+1),a
         ld (switch_state+2),a
         ld (switch_state+3),a
-        ld hl,opened_doors      ; ...every door shut,
-        ld b,32                 ; ...and every key back in place
-ms_cd:                          ; (opened_doors and taken_keys are
-        ld (hl),a               ;  adjacent: one 32-byte sweep)
+        ld hl,opened_doors      ; ...every door shut, every key and
+        ld b,40                 ; ...crate back in place
+ms_cd:                          ; (opened_doors, taken_keys, taken_meds
+        ld (hl),a               ;  are adjacent: one 40-byte sweep)
         inc hl
         djnz ms_cd
         ld (immune_timer),a
@@ -4594,6 +4641,7 @@ txt_end_2c:     defb "THE POISON WAS A LIE",0
 txt_end_2d:     defb "THE SHAFT WAS A CAGE",0
 txt_end_3t:     defb "THE END",0
 txt_end_3b:     defb "PRESS FIRE",0
+txt_score:      defb "SCORE 0000",0
 bt_ptr:         defw 0
 
 ; ----------------------------------------------------------------------
@@ -4676,6 +4724,7 @@ visited_stops:  defb 0          ; bitmask of lift stops reached on foot
 switch_state:   defs 4,0        ; 32 vault switches, one bit each
 opened_doors:   defs 16,0       ; 128 doors, one bit each: stay open
 taken_keys:     defs 16,0       ; 128 key cells: pocketed for good
+taken_meds:     defs 8,0        ; one crate per level, bit = level-1
 door_base:      defb 0          ; first global door id on this level
 door_count:     defb 0
 door_tab:       defs 4*3,0      ; per door here: id, rect address

@@ -459,35 +459,35 @@ level_table:
         defb #C5
         defw #6DE9,654   ; level 44
         defb #C5
-        defw #7077,667   ; level 45
+        defw #7077,644   ; level 45
         defb #C5
-        defw #7312,673   ; level 46
+        defw #72FB,657   ; level 46
         defb #C5
-        defw #75B3,655   ; level 47
+        defw #758C,667   ; level 47
         defb #C5
-        defw #7842,666   ; level 48
+        defw #7827,672   ; level 48
         defb #C5
-        defw #7ADC,662   ; level 49
+        defw #7AC7,670   ; level 49
         defb #C6
         defw #4000,673   ; level 50
         defb #C6
-        defw #42A1,663   ; level 51
+        defw #42A1,658   ; level 51
         defb #C6
-        defw #4538,665   ; level 52
+        defw #4533,653   ; level 52
         defb #C6
-        defw #47D1,666   ; level 53
+        defw #47C0,655   ; level 53
         defb #C6
-        defw #4A6B,659   ; level 54
+        defw #4A4F,657   ; level 54
         defb #C6
-        defw #4CFE,655   ; level 55
+        defw #4CE0,678   ; level 55
         defb #C6
-        defw #4F8D,657   ; level 56
+        defw #4F86,666   ; level 56
         defb #C6
-        defw #521E,676   ; level 57
+        defw #5220,667   ; level 57
         defb #C6
-        defw #54C2,653   ; level 58
+        defw #54BB,662   ; level 58
         defb #C6
-        defw #574F,656   ; level 59
+        defw #5751,645   ; level 59
 
 LEVEL_COUNT     equ 59
 TILE_EMPTY      equ 0
