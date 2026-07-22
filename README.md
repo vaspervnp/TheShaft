@@ -79,7 +79,7 @@ switch is free: each one is guarded by a patrolling enemy, a red leak
 overhead, or a steam vent right under the lever. **Opened doors
 stay open for the whole run** — every door has a persistent id in a
 128-bit ledger, and revisited levels reload with their unlocked doors
-already gone (keys, by contrast, respawn on revisit). Medical crates
+already gone (and every key cell has its own id too: **a taken key never reappears** — the supply is exactly what the generator placed, which the build-time verifier proves sufficient). Medical crates
 only start appearing from level 20.
 
 **The lasso aims from the cursor**: plain Z whips sideways as before;
@@ -87,9 +87,9 @@ hold **up** for a straight overhead snare (2 px wide, 16 tall), or
 **up + a direction** for a 45° rising diagonal — all clamped at walls
 and roof, all drawn as stepped rope segments. The build-time verifier threads one global key inventory through
 the whole 59-level climb, so the forward route always works — and if
-you miss a key, levels reload fresh when revisited (taken keys are
-shown again), so with downward travel and the elevators nothing is
-ever softlocked. Mechanical runs at most one local pair; Agricultural
+you miss a key it is still lying where it was, and what you took you
+keep — so with downward travel and the elevators nothing is ever
+softlocked. Mechanical runs at most one local pair; Agricultural
 introduces cross-level keys; Administrative chains up to three doors a
 level. The HUD: key icon with five colour counts (left), level number
 (centre), energy bolt, and a heart with lives (right).

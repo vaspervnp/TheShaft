@@ -1857,7 +1857,7 @@ ll_vents:
         inc hl
         ld (vent_count),a
         or a
-        jr z,ll_doors
+        jr z,ll_keys
         ld b,a
         ld ix,vent_tab
 ll_vn:
@@ -1882,6 +1882,48 @@ ll_vn:
         ld de,6
         add ix,de
         djnz ll_vn
+ll_keys:
+        ; --- the key ledger: every key cell has a global id; keys
+        ; taken on an earlier visit are wiped from the map for good
+        xor a
+        ld (key_count),a
+        ld a,(hl)
+        inc hl
+        ld (key_count),a
+        or a
+        jr z,ll_doors
+        ld b,a
+        ld ix,key_tab
+llk:
+        ld a,(hl)
+        inc hl
+        ld (ix+0),a             ; global key id
+        ld a,(hl)
+        inc hl
+        ld (ix+1),a             ; map column
+        ld a,(hl)
+        inc hl
+        ld (ix+2),a             ; map row
+        push bc
+        push hl
+        ld a,(ix+0)
+        call key_taken
+        jr nc,llk_keep
+        ld d,(ix+1)             ; already pocketed: the tile goes --
+        ld e,(ix+2)             ; but only if it really is a key
+        call map_cell_addr      ; (a sealed vault's key never even
+        ld a,(hl)               ;  materialised: nothing to wipe)
+        cp TILE_KEY_BASE
+        jr c,llk_keep
+        cp TILE_KEY_BASE+5
+        jr nc,llk_keep
+        ld (hl),TILE_EMPTY
+llk_keep:
+        pop hl
+        pop bc
+        ld de,3
+        add ix,de
+        djnz llk
 ll_doors:
         ; --- trailer: first global door id.  Walk the rects, note each
         ; door's id, and REOPEN any remembered from an earlier visit --
@@ -1966,6 +2008,48 @@ door_mark_open:                 ; A = door id: remember it forever
         ld a,(hl)
         or b
         ld (hl),a
+        ret
+
+key_taken:                      ; A = key id -> carry if pocketed
+        ld hl,taken_keys
+        call bit_locate
+        ld a,(hl)
+        and b
+        ret z
+        scf
+        ret
+
+key_mark:                       ; A = key id: gone from the shaft
+        ld hl,taken_keys
+        call bit_locate
+        ld a,(hl)
+        or b
+        ld (hl),a
+        ret
+
+key_find:                       ; cell (D,E) -> carry + A = key id
+        ld a,(key_count)
+        or a
+        ret z
+        ld b,a
+        ld ix,key_tab
+kf_loop:
+        ld a,(ix+1)
+        cp d
+        jr nz,kf_next
+        ld a,(ix+2)
+        cp e
+        jr z,kf_hit
+kf_next:
+        inc ix
+        inc ix
+        inc ix
+        djnz kf_loop
+        or a
+        ret
+kf_hit:
+        ld a,(ix+0)
+        scf
         ret
 
 ; open_door_rect -- IX = door rect: kill the rect, clear its tiles
@@ -2256,8 +2340,12 @@ game_win:
         call ew_fire            ; this page waits for Fire
         jp menu_screen
 
-; ew_wait -- run B frames of the ending (music on), Fire skips ahead
+; ew_wait -- run B counts of the ending, THREE frames each: the pages
+; linger long enough to read twice; Fire still hurries them along
 ew_wait:
+        push bc
+        ld b,3
+ew_w2:
         push bc
         call frame_sync
         call flip_buffers
@@ -2267,8 +2355,13 @@ ew_wait:
         pop bc
         ld a,(input_new)
         bit INP_FIRE,a
-        ret nz
+        jr nz,ew_skip
+        djnz ew_w2
+        pop bc
         djnz ew_wait
+        ret
+ew_skip:
+        pop bc
         ret
 ew_fire:                        ; loop until Fire
         push bc
@@ -3024,6 +3117,27 @@ render_entities:
         ld e,(hl)
         call restore_area
 re_no_rope:
+        ; --- last frame's hint arrow in this buffer, if any
+        ld hl,hint_prev
+        ld a,(buf_index)
+        ld c,a
+        add a,a
+        add a,c
+        ld c,a
+        ld b,0
+        add hl,bc
+        ld a,(hl)
+        or a
+        jr z,re_no_hint
+        ld (hl),0               ; consumed
+        inc hl
+        ld b,(hl)
+        inc hl
+        ld c,(hl)
+        ld d,4                  ; one glyph: 4 bytes x 8 lines
+        ld e,8
+        call restore_area
+re_no_hint:
         ; --- restore under every entity's old image
         ld ix,entities
         ld iy,entity_prev
@@ -3336,6 +3450,8 @@ ck_cell:                        ; keycards and medkits, by tile index
         inc (hl)
         pop de
         pop hl
+        call key_find           ; this exact key, remembered gone
+        call c,key_mark
         jp ck_took
 ck_key_full:
         pop de
@@ -3374,34 +3490,27 @@ ck_va_hit:
         jr ck_va_out
 ck_not_vault:
         cp TILE_SWITCH_OFF
+        jr z,ck_switch
+        cp TILE_SWITCH_ON
         jr nz,ck_not_switch
-        ; a wall switch: find its record by cell, set its bit --
-        ; somewhere up (or down) the shaft, a vault slides open
+        ; standing at a thrown switch: remind where its vault waits
         push de
-        ld a,(switch_count)
-        or a
-        jr z,ck_sw_out
-        ld b,a
-        ld ix,switch_tab
-ck_sw_find:
-        ld a,(ix+1)
-        cp d                    ; same column?
-        jr nz,ck_sw_next
-        ld a,(ix+2)
-        cp e                    ; same row?
-        jr z,ck_sw_hit
-ck_sw_next:
-        inc ix
-        inc ix
-        inc ix
-        djnz ck_sw_find
-ck_sw_out:
+        push bc
+        call sw_find
+        call c,sw_hint
+        pop bc
         pop de
         ret
-ck_sw_hit:
-        ld a,(ix+0)             ; set bit id in switch_state
-        ld c,a
-        and 7
+ck_switch:
+        ; an unpressed switch: throw it, and point at its vault
+        push de
+        push bc
+        call sw_find
+        jr nc,ck_sw_out
+        call sw_hint
+        ld a,(ix+0)             ; set bit id in switch_state (bit 7 is
+        ld c,a                  ; the direction flag: harmless here --
+        and 7                   ; the bit maths only reads id & 0x1F)
         ld b,a
         inc b
         xor a
@@ -3422,12 +3531,51 @@ ck_sw_sh:
         ld a,(hl)
         or e
         ld (hl),a
+        pop bc
         pop de
         call map_cell_addr      ; flip the lever tile to ON
         ld (hl),TILE_SWITCH_ON
         call redraw_cell_both
         ld a,SFX_PING
         jp sfx_start
+ck_sw_out:
+        pop bc
+        pop de
+        ret
+
+sw_find:                        ; cell (D,E) -> carry set + IX = record
+        ld a,(switch_count)
+        or a
+        ret z                   ; (carry already clear)
+        ld b,a
+        ld ix,switch_tab
+swf_loop:
+        ld a,(ix+1)
+        cp d
+        jr nz,swf_next
+        ld a,(ix+2)
+        cp e
+        jr z,swf_hit
+swf_next:
+        inc ix
+        inc ix
+        inc ix
+        djnz swf_loop
+        or a
+        ret
+swf_hit:
+        scf
+        ret
+
+sw_hint:                        ; arrow from the record's direction bit
+        ld a,GLYPH_UP           ; vault above (the classic stream)...
+        bit 7,(ix+0)
+        jr z,swh_set
+        ld a,GLYPH_DOWN         ; ...or below (climb back down for it)
+swh_set:
+        ld (hint_glyph),a
+        ret
+
 ck_not_switch:
         cp TILE_MEDKIT
         ret nz
@@ -3927,10 +4075,10 @@ ms_blink:
         ld (switch_state+1),a
         ld (switch_state+2),a
         ld (switch_state+3),a
-        ld hl,opened_doors      ; ...and every door shut
-        ld b,16
-ms_cd:
-        ld (hl),a
+        ld hl,opened_doors      ; ...every door shut,
+        ld b,32                 ; ...and every key back in place
+ms_cd:                          ; (opened_doors and taken_keys are
+        ld (hl),a               ;  adjacent: one 32-byte sweep)
         inc hl
         djnz ms_cd
         ld (immune_timer),a
@@ -4407,6 +4555,7 @@ elevator_col:   defb #FF        ; lift door x on this level (#FF none)
 visited_stops:  defb 0          ; bitmask of lift stops reached on foot
 switch_state:   defs 4,0        ; 32 vault switches, one bit each
 opened_doors:   defs 16,0       ; 128 doors, one bit each: stay open
+taken_keys:     defs 16,0       ; 128 key cells: pocketed for good
 door_base:      defb 0          ; first global door id on this level
 door_count:     defb 0
 door_tab:       defs 4*3,0      ; per door here: id, rect address
@@ -4437,6 +4586,8 @@ vent_count:     defb 0
 vent_tab:       defs MAX_VENTS*6,0    ; x,blast_y,interval,timer,pad,pad
 vent_last:      defb 0          ; frame_ticks at the last vent update
 vent_acc:       defb 0          ; banked ticks (6 = one beat)
+key_count:      defb 0          ; key cells on this level
+key_tab:        defs 8*3,0      ; per key: id, map col, map row
 vault_count:    defb 0          ; sealed vaults on this level
 vault_tab:      defs 4*3,0      ; per vault: map col, row, arrow glyph
 hint_glyph:     defb 0          ; arrow to show this frame (0 = none)

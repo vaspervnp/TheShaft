@@ -676,7 +676,8 @@ def verify(level, plan, entry_col, name, inventory=None, pressed=None):
         pressed = set()
     vault_by_cell = {(p, c): (vid, col)
                      for vid, p, c, col, _d in plan.get("vaults", [])}
-    switch_by_cell = {(p, c): sid for sid, p, c in plan.get("switches", [])}
+    switch_by_cell = {(p, c): sid & 0x7F
+                      for sid, p, c in plan.get("switches", [])}
 
     def plat_of(yy):
         for p in range(3):
@@ -793,7 +794,19 @@ def verify(level, plan, entry_col, name, inventory=None, pressed=None):
 # ======================================================================
 # Blob building and bank packing
 # ======================================================================
-def build_blob(level, zone, rng, plan_lookup, door_base=0):
+def key_cells(plan):
+    """Canonical order of this level's key cells: loose keys first
+    (keys_at order), then each vault's materialisation cell (one row
+    above the safe)."""
+    out = []
+    for kp, kc in plan["keys_at"]:
+        out.append((kc, 22 if kp < 0 else PLAT_ROWS[kp] - 2))
+    for _vid, p, c, _col, _d in plan["vaults"]:
+        out.append((c, (23 if p < 0 else PLAT_ROWS[p] - 1) - 1))
+    return out
+
+
+def build_blob(level, zone, rng, plan_lookup, door_base=0, key_base=0):
     ems = enemies(level, zone, rng)
     lks = leaks(level, rng)
     vns = vents(level, rng)
@@ -824,6 +837,11 @@ def build_blob(level, zone, rng, plan_lookup, door_base=0):
         r = 22 if p < 0 else PLAT_ROWS[p] - 2
         sdata += bytes([sid, c, r])
     ndata = bytes([len(vns)]) + b''.join(bytes(v) for v in vns)
+    kc = key_cells(plan_lookup)
+    assert len(kc) <= 8, "too many keys on one level"
+    kdata = bytes([len(kc)])
+    for i, (c, r) in enumerate(kc):
+        kdata += bytes([key_base + i, c, r])
     vdata = bytes([len(vap)])
     for vid, p, c, col, sw_above in vap:
         r = 23 if p < 0 else PLAT_ROWS[p] - 1   # grounded, feet level
@@ -842,7 +860,7 @@ def build_blob(level, zone, rng, plan_lookup, door_base=0):
     # trailer: this level's first global door id -- doors number
     # consecutively in rect order, for the opened-doors bitmask
     return (head + tilemap + rects + edata + ldata + sdata + vdata
-            + ndata + bytes([door_base])), len(ems)
+            + ndata + kdata + bytes([door_base])), len(ems)
 
 
 def generate_all():
@@ -916,7 +934,8 @@ def generate_all():
             below_due = [b for b in pending_below
                          if idx - b[1] == 3
                          or (idx - b[1] >= 1 and rng.random() < 0.5)]
-            sow_switch += [b[0] for b in below_due]
+            # bit 7 of the id byte: this switch's vault waits BELOW
+            sow_switch += [b[0] | 0x80 for b in below_due]
             vids = switch_pool[:n_red]   # exactly one switch per red key
             for attempt in range(150):
                 inv_try = inventory[:]
@@ -938,6 +957,7 @@ def generate_all():
             switch_pool = [s for s in switch_pool if s not in used_vids]
             below_ids = {b[0] for b in pending_below}
             for sid, _p, _c in plan["switches"]:
+                sid &= 0x7F              # strip the direction flag
                 if sid in below_ids:
                     # its sealed vault waits 1-3 levels BELOW: the
                     # player can always climb down, collect the red
@@ -978,14 +998,22 @@ def main(asm_path, build_dir):
         door_bases.append(did)
         did += len(pl["pairs"])
     assert did <= 128, f"{did} doors exceed the opened-doors bitmask"
-    print(f"{did} doors carry persistent ids", file=sys.stderr)
+    # ...and the same for every key cell: taken keys stay taken
+    key_bases, kid = [], 0
+    for pl in plans:
+        key_bases.append(kid)
+        kid += len(key_cells(pl))
+    assert kid <= 128, f"{kid} keys exceed the taken-keys bitmask"
+    print(f"{did} doors and {kid} keys carry persistent ids",
+          file=sys.stderr)
 
     # pack blobs into 16K banks (a level never straddles banks)
     banks, table = [b''], []
     total_enemies = 0
     for n, lv in enumerate(levels):
         zone = 0 if n < 19 else 1 if n < 39 else 2
-        blob, ne = build_blob(lv, zone, rng, plans[n], door_bases[n])
+        blob, ne = build_blob(lv, zone, rng, plans[n], door_bases[n],
+                              key_bases[n])
         total_enemies += ne
         if len(banks[-1]) + len(blob) > BANK_SIZE:
             banks.append(b'')

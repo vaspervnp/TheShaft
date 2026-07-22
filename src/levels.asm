@@ -371,123 +371,123 @@ menu_map:   ; title-screen backdrop
 ; within the bank (#4000-based), word blob length ---
 level_table:
         defb #C4
-        defw #4000,613   ; level 1
+        defw #4000,614   ; level 1
         defb #C4
-        defw #4265,647   ; level 2
+        defw #4266,651   ; level 2
         defb #C4
-        defw #44EC,641   ; level 3
+        defw #44F1,645   ; level 3
         defb #C4
-        defw #476D,636   ; level 4
+        defw #4776,640   ; level 4
         defb #C4
-        defw #49E9,633   ; level 5
+        defw #49F6,640   ; level 5
         defb #C4
-        defw #4C62,633   ; level 6
+        defw #4C76,637   ; level 6
         defb #C4
-        defw #4EDB,649   ; level 7
+        defw #4EF3,656   ; level 7
         defb #C4
-        defw #5164,652   ; level 8
+        defw #5183,656   ; level 8
         defb #C4
-        defw #53F0,645   ; level 9
+        defw #5413,646   ; level 9
         defb #C4
-        defw #5675,655   ; level 10
+        defw #5699,659   ; level 10
         defb #C4
-        defw #5904,654   ; level 11
+        defw #592C,661   ; level 11
         defb #C4
-        defw #5B92,641   ; level 12
+        defw #5BC1,648   ; level 12
         defb #C4
-        defw #5E13,640   ; level 13
+        defw #5E49,641   ; level 13
         defb #C4
-        defw #6093,651   ; level 14
+        defw #60CA,652   ; level 14
         defb #C4
-        defw #631E,662   ; level 15
+        defw #6356,669   ; level 15
         defb #C4
-        defw #65B4,660   ; level 16
+        defw #65F3,667   ; level 16
         defb #C4
-        defw #6848,663   ; level 17
+        defw #688E,670   ; level 17
         defb #C4
-        defw #6ADF,653   ; level 18
+        defw #6B2C,654   ; level 18
         defb #C4
-        defw #6D6C,651   ; level 19
+        defw #6DBA,652   ; level 19
         defb #C4
-        defw #6FF7,637   ; level 20
+        defw #7046,641   ; level 20
         defb #C4
-        defw #7274,638   ; level 21
+        defw #72C7,642   ; level 21
         defb #C4
-        defw #74F2,633   ; level 22
+        defw #7549,640   ; level 22
         defb #C4
-        defw #776B,624   ; level 23
+        defw #77C9,628   ; level 23
         defb #C4
-        defw #79DB,652   ; level 24
+        defw #7A3D,659   ; level 24
         defb #C4
-        defw #7C67,644   ; level 25
+        defw #7CD0,651   ; level 25
         defb #C5
-        defw #4000,635   ; level 26
+        defw #4000,639   ; level 26
         defb #C5
-        defw #427B,644   ; level 27
+        defw #427F,648   ; level 27
         defb #C5
-        defw #44FF,645   ; level 28
+        defw #4507,649   ; level 28
         defb #C5
-        defw #4784,649   ; level 29
+        defw #4790,656   ; level 29
         defb #C5
-        defw #4A0D,661   ; level 30
+        defw #4A20,665   ; level 30
         defb #C5
-        defw #4CA2,640   ; level 31
+        defw #4CB9,647   ; level 31
         defb #C5
-        defw #4F22,646   ; level 32
+        defw #4F40,653   ; level 32
         defb #C5
-        defw #51A8,656   ; level 33
+        defw #51CD,666   ; level 33
         defb #C5
-        defw #5438,640   ; level 34
+        defw #5467,650   ; level 34
         defb #C5
-        defw #56B8,656   ; level 35
+        defw #56F1,660   ; level 35
         defb #C5
-        defw #5948,663   ; level 36
+        defw #5985,670   ; level 36
         defb #C5
-        defw #5BDF,636   ; level 37
+        defw #5C23,640   ; level 37
         defb #C5
-        defw #5E5B,641   ; level 38
+        defw #5EA3,648   ; level 38
         defb #C5
-        defw #60DC,641   ; level 39
+        defw #612B,645   ; level 39
         defb #C5
-        defw #635D,652   ; level 40
+        defw #63B0,659   ; level 40
         defb #C5
-        defw #65E9,646   ; level 41
+        defw #6643,653   ; level 41
         defb #C5
-        defw #686F,655   ; level 42
+        defw #68D0,662   ; level 42
         defb #C5
-        defw #6AFE,639   ; level 43
+        defw #6B66,643   ; level 43
         defb #C5
-        defw #6D7D,644   ; level 44
+        defw #6DE9,654   ; level 44
         defb #C5
-        defw #7001,657   ; level 45
+        defw #7077,667   ; level 45
         defb #C5
-        defw #7292,666   ; level 46
+        defw #7312,673   ; level 46
         defb #C5
-        defw #752C,645   ; level 47
+        defw #75B3,655   ; level 47
         defb #C5
-        defw #77B1,659   ; level 48
+        defw #7842,666   ; level 48
         defb #C5
-        defw #7A44,655   ; level 49
-        defb #C5
-        defw #7CD3,663   ; level 50
+        defw #7ADC,662   ; level 49
         defb #C6
-        defw #4000,656   ; level 51
+        defw #4000,673   ; level 50
         defb #C6
-        defw #4290,655   ; level 52
+        defw #42A1,663   ; level 51
         defb #C6
-        defw #451F,656   ; level 53
+        defw #4538,665   ; level 52
         defb #C6
-        defw #47AF,649   ; level 54
+        defw #47D1,666   ; level 53
         defb #C6
-        defw #4A38,648   ; level 55
+        defw #4A6B,659   ; level 54
         defb #C6
-        defw #4CC0,650   ; level 56
+        defw #4CFE,655   ; level 55
         defb #C6
-        defw #4F4A,660   ; level 57
+        defw #4F8D,657   ; level 56
         defb #C6
-        defw #51DE,646   ; level 58
+        defw #521E,676   ; level 57
         defb #C6
-        defw #5464,646   ; level 59
+        defw #54C2,653   ; level 58
+        defb #C6
+        defw #574F,656   ; level 59
 
 LEVEL_COUNT     equ 59
 TILE_EMPTY      equ 0
