@@ -91,8 +91,10 @@ you miss a key it is still lying where it was, and what you took you
 keep — so with downward travel and the elevators nothing is ever
 softlocked. Mechanical runs at most one local pair; Agricultural
 introduces cross-level keys; Administrative chains up to three doors a
-level. The HUD: key icon with five colour counts (left), level number
-(centre), energy bolt, and a heart with lives (right).
+level. The HUD: key icon with five colour counts (left), level
+number, a four-digit **score** (+1 a snared enemy, +2 a pocketed key,
++3 an opened door — capped at 9999), energy bolt, and a heart with
+lives (right).
 
 **Speed**: the two per-sprite costs are hand-tuned. The masked blit
 walks the sprite data with the *stack pointer* — one `POP` fetches a

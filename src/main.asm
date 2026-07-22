@@ -159,6 +159,7 @@ SFX_JUMP        equ 1
 SFX_HIT         equ 2
 SFX_PING        equ 3
 SFX_WHIP        equ 4
+SFX_KILL        equ 5
 
         org #1000
 
@@ -3069,7 +3070,9 @@ lh_loop:
         ld (ix+8),2
         push bc
         push de
-        ld a,SFX_PING
+        ld a,1                  ; +1: one fewer between you and the top
+        call score_add
+        ld a,SFX_KILL
         call sfx_start
         pop de
         pop bc
@@ -3452,6 +3455,8 @@ ck_cell:                        ; keycards and medkits, by tile index
         pop hl
         call key_find           ; this exact key, remembered gone
         call c,key_mark
+        ld a,2                  ; +2 for the pocketed card
+        call score_add
         jp ck_took
 ck_key_full:
         pop de
@@ -3669,6 +3674,8 @@ cdo_open:
         or a
         ret z                   ; no key of THIS colour: stays locked
         dec (hl)
+        ld a,3                  ; +3: another lock beaten
+        call score_add
         ; find this door's id (by rect address) and remember it open
         push ix
         pop de
@@ -3931,6 +3938,43 @@ atg3:
         ret
 
 ; ----------------------------------------------------------------------
+; score_add -- A = points.  The score lives as four decimal digits
+; (most significant first), so the HUD just draws them; overflow pegs
+; at 9999.  Preserves BC/DE (callers are mid-loop with live boxes).
+; ----------------------------------------------------------------------
+score_add:
+        push bc
+        push hl
+        ld b,4
+        ld hl,score+3           ; least significant digit
+sa_loop:
+        add a,(hl)
+        cp 10
+        jr c,sa_done
+        sub 10
+        ld (hl),a
+        ld a,1                  ; carry a one leftwards
+        dec hl
+        djnz sa_loop
+        ld hl,score             ; ran off the top: peg 9999
+        ld a,9
+        ld (hl),a
+        inc hl
+        ld (hl),a
+        inc hl
+        ld (hl),a
+        inc hl
+        ld (hl),a
+        pop hl
+        pop bc
+        ret
+sa_done:
+        ld (hl),a
+        pop hl
+        pop bc
+        ret
+
+; ----------------------------------------------------------------------
 ; draw_hud -- keycards held (left, green) and lives (right, red).
 ; Drawn into the hidden buffer every frame: two glyphs, trivial cost,
 ; and both buffers stay correct without any dirty-tracking.
@@ -3988,23 +4032,41 @@ hud_tdone:
         jr z,hud_tblank
         ld a,c
 hud_tblank:
-        ld b,36
+        ld b,28
         ld c,0
         ld e,1                  ; white
         call draw_char
         pop af
-        ld b,40
+        ld b,32
         ld c,0
         ld e,1
         call draw_char
+        ; the score: four white digits, always shown
+        ld hl,score
+        ld b,40
+hud_sc:
+        ld a,(hl)               ; a digit IS its glyph
+        push hl
+        push bc
+        ld c,0
+        ld e,1
+        call draw_char
+        pop bc
+        pop hl
+        inc hl
+        ld a,b
+        add a,4
+        ld b,a
+        cp 56
+        jr c,hud_sc
         ld a,GLYPH_BOLT         ; energy...
-        ld b,56
+        ld b,60
         ld c,0
         ld e,7
         call draw_char
         ld a,(player_energy)
         and #0F
-        ld b,60
+        ld b,64
         ld c,0
         ld e,7
         call draw_char
@@ -4084,6 +4146,14 @@ ms_cd:                          ; (opened_doors and taken_keys are
         ld (immune_timer),a
         ld a,ENERGY_MAX
         ld (player_energy),a
+        ld hl,score
+        ld (hl),0
+        inc hl
+        ld (hl),0
+        inc hl
+        ld (hl),0
+        inc hl
+        ld (hl),0
         ld a,1
         ld (current_level),a
         ld a,38                 ; the mechanic's post, mid-deck
@@ -4144,6 +4214,8 @@ draw_menu_page:                 ; backdrop + text + diorama, one buffer
 ;   JUMP : square tone whose period shrinks each frame - rising chirp
 ;   HIT  : pure noise burst, volume ramping 12->0 - a metallic crunch
 ;   PING : short high tone, quick fade - the keycard chime
+;   WHIP : the lasso -- noise snap + plunging tone, cut hard
+;   KILL : a felled guard -- sinking bass tone over deep noise
 ; ======================================================================
 psg_write:                      ; A = AY register, E = value
         di
@@ -4186,7 +4258,11 @@ sfx_update:                     ; call once per frame
         dec a
         jr z,sfx_upd_hit
         dec a
-        jr nz,sfx_upd_whip
+        jr z,sfx_upd_ping
+        dec a
+        jp z,sfx_upd_whip
+        jp sfx_upd_kill
+sfx_upd_ping:
         ; ---- PING: high steady tone (period 40 ~= 1.5kHz), fast fade
         xor a
         ld e,40
@@ -4234,8 +4310,9 @@ sfx_upd_hit:
         ld a,8
         jp psg_write
 sfx_upd_whip:
-        ; ---- WHIP: the lasso crack -- pitch plunging fast (period
-        ; grows 62..190 over 6 frames)
+        ; ---- WHIP: the lasso crack -- a bright noise SNAP riding a
+        ; tone that plunges 62..190 over 6 frames; volume opens at 15
+        ; and is cut hard (15,13,11,9,7,5) -- it stings, then it's gone
         ld a,(sfx_timer)
         ld e,a
         ld a,7
@@ -4252,10 +4329,52 @@ sfx_upd_whip:
         ld a,1
         ld e,0
         call psg_write          ; R1
-        ld a,8
+        ld a,6
+        ld e,3                  ; tight bright noise: the snap itself
+        call psg_write
+        xor a                   ; claim tone AND noise on A
         ld (mix_a),a
+        ld a,(sfx_timer)
+        add a,a
+        add a,3                 ; 6..1 -> 15,13,11,9,7,5
+        ld e,a
         ld a,8
-        ld e,10
+        jp psg_write
+sfx_upd_kill:
+        ; ---- KILL: a guard goes down -- bass tone sinking under a
+        ; deep noise bed, both on channel A.  Period 320+age*64 climbs
+        ; to 1216 (~347Hz down to ~92Hz) across 16 frames.
+        ld a,(sfx_timer)        ; 15..1
+        ld e,a
+        ld a,16
+        sub e                   ; age 1..15
+        ld l,a
+        ld h,0
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        add hl,hl               ; x64
+        ld de,256
+        add hl,de
+        ld e,l
+        xor a
+        call psg_write          ; R0 (psg_write keeps HL)
+        ld e,h
+        ld a,1
+        call psg_write          ; R1
+        ld a,6
+        ld e,20                 ; slow, cavernous noise
+        call psg_write
+        xor a                   ; claim tone AND noise on A
+        ld (mix_a),a
+        ld a,(sfx_timer)
+        cp 14
+        jr c,$+4
+        ld a,13                 ; 13,13,13,12,11,...,1: a dying rumble
+        ld e,a
+        ld a,8
         jp psg_write
 sfx_silence:
         ld a,8
@@ -4266,7 +4385,7 @@ sfx_silence:
         ret
 
 sfx_len_tab:
-        defb 12,24,8,6          ; frames: JUMP, HIT, PING, WHIP
+        defb 12,24,8,6,16       ; frames: JUMP, HIT, PING, WHIP, KILL
 
 ; ======================================================================
 ;
@@ -4534,6 +4653,7 @@ frame_ctr:      defb 0          ; ++ every game/menu frame (blink, anim)
 game_lives:     defb START_LIVES
 keys_held:      defs 5,0        ; green, cyan, yellow, white, red
 player_energy:  defb ENERGY_MAX
+score:          defs 4,0        ; four decimal digits, msd first
 immune_timer:   defb 0          ; post-hit invulnerability flicker
 current_level:  defb 1
 respawn_x:      defb 38         ; where this level was entered
