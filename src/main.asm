@@ -250,6 +250,14 @@ game_loop:
         dec a
         jp nz,prev_level        ; (level 1's deck is the true bottom)
 gl_no_desc:
+        ; fell clean through the deck hole?  the shaft goes on below
+        ld a,(player_y)
+        cp 186
+        jr c,gl_no_fdesc
+        ld a,(current_level)
+        dec a
+        jp nz,prev_level
+gl_no_fdesc:
         ld a,(fall_hit)         ; landed from more than one floor up?
         or a
         call nz,take_fall_hit

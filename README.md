@@ -220,24 +220,21 @@ fixed.
 | 6 | ![](docs/gfx/tile_06_pipe.png) | `pipe` | decor | Vertical coolant pipe with coupling bands |
 | 7 | ![](docs/gfx/tile_07_hazard.png) | `hazard` | decor | Diagonal warning stripes (deck corners, menu trim) |
 | 8–12 | ![](docs/gfx/tile_08_keycard_g.png) ![](docs/gfx/tile_09_keycard_c.png) ![](docs/gfx/tile_10_keycard_y.png) ![](docs/gfx/tile_11_keycard_w.png) ![](docs/gfx/tile_12_keycard_r.png) | `keycard_g/c/y/w/r` | pickup | Keycards in five colours (green, cyan, yellow, white, red); touch to pocket |
-| 13–17 | ![](docs/gfx/tile_13_door_g.png) ![](docs/gfx/tile_14_door_c.png) ![](docs/gfx/tile_15_door_y.png) ![](docs/gfx/tile_16_door_w.png) ![](docs/gfx/tile_17_door_r.png) | `door_g/c/y/w/r` | SOLID+DOOR | Security doors, 3 tiles tall (unjumpable); each opens only to its own colour and **stays open all run** |
-| 18 | ![](docs/gfx/tile_18_vine.png) | `vine` | decor | Hydroponics growth, also hangs under Agricultural platforms |
-| 19 | ![](docs/gfx/tile_19_lamp.png) | `lamp` | decor | Work light hanging under platforms (Mech/Admin) |
-| 20 | ![](docs/gfx/tile_20_grate.png) | `grate` | decor | Ventilation grate slats |
-| 21 | ![](docs/gfx/tile_21_bush.png) | `bush` | decor | Hydroponic planter in an orange pot |
-| 22 | ![](docs/gfx/tile_22_panel.png) | `panel` | decor | Wall terminal with scan-lined screen |
-| 23 | ![](docs/gfx/tile_23_elevator.png) | `elevator` | interactive | Lift door on stop levels (1, 10…50): stand here, Up/Down rides between visited stops |
-| 24 | ![](docs/gfx/tile_24_medkit.png) | `medkit` | pickup | Medical crate (white, red cross): 1–4 energy, overflow past 5 banks a life; levels 20+ only |
-| 25 | ![](docs/gfx/tile_25_leak_red.png) | `leak_red` | hazard source | Ceiling pipe with a **red-stained** hole: drips lubricant that costs energy |
-| 26 | ![](docs/gfx/tile_26_leak_white.png) | `leak_white` | decor source | Same pipe, clean drip — a harmless fake-out |
-| 27 | ![](docs/gfx/tile_27_switch_off.png) | `switch_off` | interactive | Wall switch, red lever: touch to throw it and unseal its vault **on another level** |
-| 28 | ![](docs/gfx/tile_28_switch_on.png) | `switch_on` | decor | The same switch after pressing (green, stays thrown all run) |
-| 29 | ![](docs/gfx/tile_29_vault.png) | `vault` | pickup (gated) | Sealed key safe, grounded at feet level; once its switch is thrown, the safe stays put and its red keycard appears on top of it — **and every vault holds a RED key: red keys exist nowhere else**. Stand on a sealed one and a blinking arrow over your head points the way to its switch — up or down the shaft |
-| 30 | ![](docs/gfx/tile_30_vent.png) | `vent` | hazard source | Steam nozzle, grounded; blasts a lethal column upward on its own 300 Hz-derived clock. One guards most switches |
-| 31 | ![](docs/gfx/tile_31_arch_tl.png) | `arch_tl` | decor | Corridor mouth, top-left quarter — the four `arch_*` tiles compose a 2×2 doorway into the depth of the complex, wider than the climber |
-| 32 | ![](docs/gfx/tile_32_arch_tr.png) | `arch_tr` | decor | Corridor mouth, top-right quarter (bevelled lintel, distant lamp) |
-| 33 | ![](docs/gfx/tile_33_arch_bl.png) | `arch_bl` | decor | Corridor mouth, bottom-left: the passage floor recedes to a point |
-| 34 | ![](docs/gfx/tile_34_arch_br.png) | `arch_br` | decor | Corridor mouth, bottom-right |
+| 13 | ![](docs/gfx/tile_13_door_body.png) | `door_body` | SOLID+DOOR | The armoured security shutter: colourless riveted steel plates filling the whole corridor, deck to ceiling (4 body tiles + a lintel). All five colours share this body — you read a door's colour from its lintel light. Opens only to that colour and **stays open all run** |
+| 14 | ![](docs/gfx/tile_14_vine.png) | `vine` | decor | Hydroponics growth, also hangs under Agricultural platforms |
+| 15 | ![](docs/gfx/tile_15_lamp.png) | `lamp` | decor | Work light hanging under platforms (Mech/Admin) |
+| 16 | ![](docs/gfx/tile_16_grate.png) | `grate` | decor | Ventilation grate slats |
+| 17 | ![](docs/gfx/tile_17_bush.png) | `bush` | decor | Hydroponic planter in an orange pot |
+| 18 | ![](docs/gfx/tile_18_panel.png) | `panel` | decor | Wall terminal with scan-lined screen |
+| 19 | ![](docs/gfx/tile_19_elevator.png) | `elevator` | interactive | Lift door on stop levels (1, 10…50): stand here, Up/Down rides between visited stops |
+| 20 | ![](docs/gfx/tile_20_medkit.png) | `medkit` | pickup | Medical crate (white, red cross): 1–4 energy, overflow past 5 banks a life; levels 20+ only |
+| 21 | ![](docs/gfx/tile_21_leak_red.png) | `leak_red` | hazard source | Ceiling pipe with a **red-stained** hole: drips lubricant that costs energy |
+| 22 | ![](docs/gfx/tile_22_leak_white.png) | `leak_white` | decor source | Same pipe, clean drip — a harmless fake-out |
+| 23 | ![](docs/gfx/tile_23_switch_off.png) | `switch_off` | interactive | Wall switch, red lever: touch to throw it and unseal its vault **on another level** |
+| 24 | ![](docs/gfx/tile_24_switch_on.png) | `switch_on` | decor | The same switch after pressing (green, stays thrown all run) |
+| 25 | ![](docs/gfx/tile_25_vault.png) | `vault` | pickup (gated) | Sealed key safe, grounded at feet level; once its switch is thrown, the safe stays put and its red keycard appears on top of it — **and every vault holds a RED key: red keys exist nowhere else**. Stand on a sealed one and a blinking arrow over your head points the way to its switch — up or down the shaft |
+| 26 | ![](docs/gfx/tile_26_vent.png) | `vent` | hazard source | Steam nozzle, grounded; blasts a lethal column upward on its own 300 Hz-derived clock. One guards most switches |
+| 27–34 | ![](docs/gfx/tile_27_arch1l.png)![](docs/gfx/tile_28_arch1r.png)<br>![](docs/gfx/tile_29_arch2l.png)![](docs/gfx/tile_30_arch2r.png)<br>![](docs/gfx/tile_31_arch3l.png)![](docs/gfx/tile_32_arch3r.png)<br>![](docs/gfx/tile_33_arch4l.png)![](docs/gfx/tile_34_arch4r.png) | `arch1l`…`arch4r` | decor | Corridor mouth: four 16×8 bands stack to a 32×32 doorway that dwarfs the climber — bevelled lintel, wall ribs, a far lamp in the dark, floor receding to a point at the threshold |
 | 35 | ![](docs/gfx/tile_35_painting_a.png) | `painting_a` | decor | Gilt-framed portrait of some forgotten director |
 | 36 | ![](docs/gfx/tile_36_painting_b.png) | `painting_b` | decor | Landscape: a sun over green hills nobody down here has seen |
 | 37 | ![](docs/gfx/tile_37_painting_c.png) | `painting_c` | decor | Abstract composition, boardroom-grade (Administrative keeps all three) |
@@ -247,6 +244,8 @@ fixed.
 | 41 | ![](docs/gfx/tile_41_flange_l.png) | `flange_l` | decor | Collar where a pipe leaves the left wall |
 | 42 | ![](docs/gfx/tile_42_flange_r.png) | `flange_r` | decor | Collar where a pipe leaves the right wall |
 | 43 | ![](docs/gfx/tile_43_duct.png) | `duct` | **solid obstacle** | Hanging vent duct at head height, one every 4–7 levels: walking stops at it — duck or slide and crawl through the gap beneath (standing up under it is refused) |
+| 44–53 | ![](docs/gfx/tile_44_turb_cap_l.png)![](docs/gfx/tile_45_turb_cap_m.png)![](docs/gfx/tile_46_turb_cap_c.png)![](docs/gfx/tile_47_turb_cap_r.png)<br>![](docs/gfx/tile_48_turb_case_l.png)![](docs/gfx/tile_52_turb_hub.png)![](docs/gfx/tile_53_turb_shaft.png)![](docs/gfx/tile_49_turb_case_r.png)<br>![](docs/gfx/tile_50_turb_blade_l.png)![](docs/gfx/tile_51_turb_blade_r.png) | `turb_*` | decor | The level 1 power turbine: ten tiles compose a generator that fills a third of the opening screen's width and nearly its whole height — hazard-striped cap with a red beacon, riveted casing columns, and alternating blade-disk stages on a shaft that plunges into the deck |
+| 54–58 | ![](docs/gfx/tile_54_door_top_g.png) ![](docs/gfx/tile_55_door_top_c.png) ![](docs/gfx/tile_56_door_top_y.png) ![](docs/gfx/tile_57_door_top_w.png) ![](docs/gfx/tile_58_door_top_r.png) | `door_top_*` | SOLID+DOOR | The shutters' lintels: a housing with the door's colour glowing in an indicator window, seated against the slab above |
 
 ### HUD & text — 8×8 glyphs, 1 bit/pixel, coloured per draw via `pen_left`
 

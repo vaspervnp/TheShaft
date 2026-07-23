@@ -87,21 +87,11 @@ TILES = [
     ("keycard_r", EMPTY, [
         "........", "........", ".555555.", ".511115.",
         ".555555.", ".55..55.", "........", "........"]),
-    ("door_g", DOOR, [
-        "29999992", "29911992", "29911992", "29999992",
-        "29999992", "29911992", "29911992", "29999992"]),
-    ("door_c", DOOR, [
-        "2aaaaaa2", "2aa11aa2", "2aa11aa2", "2aaaaaa2",
-        "2aaaaaa2", "2aa11aa2", "2aa11aa2", "2aaaaaa2"]),
-    ("door_y", DOOR, [
-        "27777772", "27711772", "27711772", "27777772",
-        "27777772", "27711772", "27711772", "27777772"]),
-    ("door_w", DOOR, [
-        "21111112", "21133112", "21133112", "21111112",
-        "21111112", "21133112", "21133112", "21111112"]),
-    ("door_r", DOOR, [
-        "25555552", "25511552", "25511552", "25555552",
-        "25555552", "25511552", "25511552", "25555552"]),
+    ("door_body", DOOR, [       # armoured shutter plate: all five
+        "21111112", "22222222",  # colours share it -- the colour
+        "12222221", "22222222",  # lives ONLY in the lintel light
+        "22222222", "12222221",
+        "22222222", "20000002"]),
     ("vine", EMPTY, [
         ".d......", ".dd.....", "..d..d..", "..dd.dd.",
         "...d.d..", "...dd...", "....d...", "....d..."]),
@@ -141,18 +131,30 @@ TILES = [
     ("vent", EMPTY, [                    # steam vent nozzle, grounded
         "........", "........", "........", "...aa...",
         "..a11a..", ".2a11a2.", "22233222", "33333333"]),
-    ("arch_tl", EMPTY, [                 # corridor mouth, 2x2 tiles:
-        "22222222", "22000000", "20000000", "20000001",
-        "20000001", "20000000", "20000000", "20000000"]),
-    ("arch_tr", EMPTY, [                 # ...a doorway into the depth
-        "22222222", "00000022", "00000002", "10000002",
-        "10000002", "00000002", "00000002", "00000002"]),
-    ("arch_bl", EMPTY, [                 # lower half: the floor of the
-        "20000000", "20000000", "20000000", "20000222",
-        "20002222", "20022222", "20222222", "22222222"]),
-    ("arch_br", EMPTY, [                 # passage recedes to a point
-        "00000002", "00000002", "00000002", "22200002",
-        "22220002", "22222002", "22222202", "22222222"]),
+    ("arch1l", EMPTY, [              # corridor mouth, 2x4 tiles:
+        "22222222", "22000000", "20000000", "20000000",
+        "20000000", "20000000", "22000000", "20000000"]),
+    ("arch1r", EMPTY, [              # a tall doorway into the
+        "22222222", "00000022", "00000002", "00000002",
+        "00000002", "00000002", "00000022", "00000002"]),
+    ("arch2l", EMPTY, [              # depth of the complex, with
+        "20000000", "20000001", "20000001", "20000000",
+        "22000000", "20000000", "20000000", "20000000"]),
+    ("arch2r", EMPTY, [              # wall ribs, a far lamp and
+        "00000002", "10000002", "10000002", "00000002",
+        "00000022", "00000002", "00000002", "00000002"]),
+    ("arch3l", EMPTY, [              # a floor receding to a
+        "20000000", "20000000", "22000000", "20000000",
+        "20000000", "20000000", "20000022", "20000222"]),
+    ("arch3r", EMPTY, [              # point at the threshold
+        "00000002", "00000002", "00000022", "00000002",
+        "00000002", "00000002", "22000002", "22200002"]),
+    ("arch4l", EMPTY, [              # (the four 16x8 bands
+        "20002222", "20002222", "20022222", "20022222",
+        "20222222", "20222222", "22222222", "22222222"]),
+    ("arch4r", EMPTY, [              # stack to 32x32 on screen)
+        "22220002", "22220002", "22222002", "22222002",
+        "22222202", "22222202", "22222222", "22222222"]),
     ("painting_a", EMPTY, [              # gilt-framed portrait
         "77777777", "70000007", "70088007", "70888807",
         "70088007", "70333307", "70000007", "77777777"]),
@@ -180,20 +182,71 @@ TILES = [
     ("duct", SOLID, [                    # hanging vent duct: slide under!
         ".2....2.", ".2....2.", "11111111", "22022022",
         "22022022", "22022022", "22022022", "00000000"]),
+    ("turb_cap_l", EMPTY, [  # the L1 turbine: generator cap
+        "........", "..222222", ".2222222", "22222222",
+        "22222222", "27070707", "22222222", "22222222"]),
+    ("turb_cap_m", EMPTY, [  # with hazard striping...
+        "........", "22222222", "22222222", "22222222",
+        "22222222", "07070707", "22222222", "22222222"]),
+    ("turb_cap_c", EMPTY, [  # ...and a red beacon on top
+        "...55...", "22255222", "22222222", "22222222",
+        "22222222", "07070707", "22222222", "22222222"]),
+    ("turb_cap_r", EMPTY, [  # 
+        "........", "222222..", "2222222.", "22222222",
+        "22222222", "70707072", "22222222", "22222222"]),
+    ("turb_case_l", EMPTY, [ # riveted casing columns
+        "22000000", "22000000", "21000000", "22000000",
+        "22000000", "21000000", "22000000", "22000000"]),
+    ("turb_case_r", EMPTY, [ # 
+        "00000022", "00000022", "00000012", "00000022",
+        "00000022", "00000012", "00000022", "00000022"]),
+    ("turb_blade_l", EMPTY, [ # blade stage: disk + fins
+        "00110000", "00011000", "11111111", "11111111",
+        "00110000", "00011000", "00001100", "00000110"]),
+    ("turb_blade_r", EMPTY, [ # 
+        "00001100", "00011000", "11111111", "11111111",
+        "00001100", "00011000", "00110000", "01100000"]),
+    ("turb_hub", EMPTY, [    # disk hub on the shaft
+        "00211200", "00211200", "11111111", "11111111",
+        "00211200", "00211200", "00211200", "00211200"]),
+    ("turb_shaft", EMPTY, [  # the shaft between stages
+        "00211200", "00211200", "00211200", "00211200",
+        "00211200", "00211200", "00211200", "00211200"]),
+    ("door_top_g", DOOR, [ # lintel: indicator light
+        "22222222", "20000002", "20999902", "20999902",
+        "20000002", "22222222", "22222222", "20000002"]),
+    ("door_top_c", DOOR, [ # lintel: indicator light
+        "22222222", "20000002", "20aaaa02", "20aaaa02",
+        "20000002", "22222222", "22222222", "20000002"]),
+    ("door_top_y", DOOR, [ # lintel: indicator light
+        "22222222", "20000002", "20777702", "20777702",
+        "20000002", "22222222", "22222222", "20000002"]),
+    ("door_top_w", DOOR, [ # lintel: indicator light
+        "22222222", "20000002", "20111102", "20111102",
+        "20000002", "22222222", "22222222", "20000002"]),
+    ("door_top_r", DOOR, [ # lintel: indicator light
+        "22222222", "20000002", "20555502", "20555502",
+        "20000002", "22222222", "22222222", "20000002"]),
 ]
 CHARMAP = {'.': "empty", 'W': "wall", '#': "slab", 'F': "floor",
            'L': "ladder", 'C': "crate", 'p': "pipe", 'h': "hazard",
            'K': "keycard_g", 'J': "keycard_c", 'Y': "keycard_y",
            'U': "keycard_w", 'O': "keycard_r",
-           'X': "door_g", 'Z': "door_c", 'Q': "door_y",
-           'V': "door_w", 'N': "door_r",
+           'X': "door_body", 'Z': "door_body", 'Q': "door_body",
+           'V': "door_body", 'N': "door_body",
            'v': "vine",
            'm': "lamp", 'g': "grate", 'b': "bush", 'n': "panel",
            'E': "elevator", 'M': "medkit",
            'l': "leak_red", 'w': "leak_white",
            '!': "switch_off", '$': "vault", 'u': "vent",
-           'a': "arch_tl", 'e': "arch_tr",
-           'c': "arch_bl", 'q': "arch_br",
+           'a': "arch1l", 'e': "arch1r", 'c': "arch2l", 'q': "arch2r",
+           'o': "arch3l", 's': "arch3r", 'A': "arch4l", 'B': "arch4r",
+           '1': "turb_cap_l", '2': "turb_cap_m", '3': "turb_cap_c",
+           '4': "turb_cap_r", '5': "turb_case_l", '6': "turb_case_r",
+           '7': "turb_blade_l", '8': "turb_blade_r",
+           '9': "turb_hub", '0': "turb_shaft",
+           'D': "door_top_g", 'H': "door_top_c", 'I': "door_top_y",
+           'P': "door_top_w", 'S': "door_top_r",
            'x': "painting_a", 'y': "painting_b", 'z': "painting_c",
            'i': "pipe_h", 'j': "pipe_bl", 'k': "pipe_br",
            'f': "flange_l", 't': "flange_r", 'd': "duct",
@@ -249,30 +302,30 @@ FONT_EXTRA = ['KEY', 'HEART', 'BOLT', 'UP', 'DOWN']
 # Level 1: the hand-authored opening screen (exit ladder col 8)
 # ----------------------------------------------------------------------
 LEVEL1 = [
-    "W.p.....L..........W",
-    "W.p.....L..........W",
-    "W.p.....L..........W",
-    "W.p.....L..........W",
-    "W.p.....L......L...W",
-    "W.......L......L...W",
+    "W.......L..........W",
+    "W1223224L..........W",
+    "W5779886L..........W",
+    "W5..0..6L..........W",
+    "W5779886L......L...W",
+    "W5..0..6L......L...W",
     "W##############L###W",
-    "W..............L...W",
-    "W..............L...W",
-    "W..............L...W",
-    "W..L...........L...W",
-    "W..L...........L...W",
+    "W5..0..6.......L...W",
+    "W5779886.......L...W",
+    "W5..0..6.......L...W",
+    "W57L9886.......L...W",
+    "W5.L0..6.......L...W",
     "W##L###############W",
-    "W..L.............p.W",
-    "W..L.............p.W",
-    "W..L.............p.W",
-    "W..L......L......p.W",
-    "W..L......L......p.W",
+    "W5.L0..6.........p.W",
+    "W57L9886.........p.W",
+    "W5.L0..6.........p.W",
+    "W57L9886..L......p.W",
+    "W5.L0..6..L......p.W",
     "W#########L########W",
-    "W.........L........W",
-    "W.........L........W",
-    "W.........L........W",
-    "W....CC...L.....E..W",
-    "Wh...CC...L.....E.hW",
+    "W5..0..6..L........W",
+    "W5779886..L........W",
+    "W5..0..6..L........W",
+    "W5779CC6..L.....E..W",
+    "Wh..0CC6..L.....E.hW",
     "FFFFFFFFFFFFFFFFFFFF",
 ]
 
@@ -407,7 +460,7 @@ PLAT_ROWS = (18, 12, 6)                 # platform slab rows, bottom-up
 def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
               cross_colors=(), spare_colors=(), local_colors=(),
               switch_ids=(), vault_ids=(), below_vault_ids=(),
-              obstacle=False):
+              obstacle=False, down_hole=False):
     """Build one screen around the fixed climb skeleton.  Returns
     (map lines, plan); raises AssertionError when a layout constraint
     cannot be met (the caller simply retries with fresh randomness)."""
@@ -431,7 +484,12 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
     l2 = pick_col([l1])
     ltop = pick_col([l2])
     ladders = [l0, l1, l2, ltop]
-    for r0, r1, col in ((16, 23, l0), (10, 17, l1), (4, 11, l2), (0, 5, ltop)):
+    # from level 3 up, the entry ladder pierces the deck: the rungs
+    # visibly continue into the level below, and standing over the
+    # hole + Down climbs straight down (the rect reaches the hole)
+    l0_end = 24 if down_hole else 23
+    for r0, r1, col in ((16, l0_end, l0), (10, 17, l1),
+                        (4, 11, l2), (0, 5, ltop)):
         for r in range(r0, r1 + 1):
             grid[r][col] = 'L'
 
@@ -454,11 +512,13 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
         assert hi - lo >= 6, "walkway too narrow for a door"
         dcol = rng.randrange(lo + 3, hi - 1)
         assert abs(dcol - arr) >= 3 and abs(dcol - dep) >= 3, "door near ladder"
-        assert all(grid[pr - r][dcol] == '.' for r in (1, 2, 3)), "door spot taken"
-        # doors are 3 tiles (24 px) tall: a 19-line jump apex leaves
-        # the feet ~5 lines inside the door's span -- unjumpable
-        for r in (1, 2, 3):
+        assert all(grid[pr - r][dcol] == '.' for r in (1, 2, 3, 4, 5)), \
+            "door spot taken"
+        # doors fill the corridor: 4 shutter tiles up to a lintel at
+        # the slab -- deck to ceiling, and more unjumpable than ever
+        for r in (1, 2, 3, 4):
             grid[pr - r][dcol] = DOOR_CH[col]
+        grid[pr - 5][dcol] = "DHIPS"[col]
         pairs.append({"color": col, "dplat": d, "dcol": dcol,
                       "cross": i < len(cross_colors)})
 
@@ -674,23 +734,26 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
             break
 
     # background corridor mouths: scenic depth, purely decorative.
-    # Two tiles wide, two tall -- a doorway wider than the climber.
+    # Two tiles wide and FOUR tall -- a doorway that dwarfs the
+    # climber, filling the corridor from deck to almost-ceiling.
     for _ in range(rng.randrange(1, 3)):
         for _ in range(40):
             p = rng.randrange(-1, 3)
-            top, fl = (22, 24) if p < 0 else (PLAT_ROWS[p] - 2, PLAT_ROWS[p])
+            top, fl = (20, 24) if p < 0 else (PLAT_ROWS[p] - 4, PLAT_ROWS[p])
             c = rng.randrange(2, 17)
             av = plat_avoid(p) if p >= 0 else [ladders[0]]
             if any(abs(cc - b) < 2 for cc in (c, c + 1) for b in av):
                 continue
-            if any(grid[top][cc] != '.' or grid[top + 1][cc] != '.'
-                   for cc in (c, c + 1)):
+            if any(grid[top + rr][cc] != '.'
+                   for rr in range(4) for cc in (c, c + 1)):
                 continue
             if any(TILES[tile_index(CHARMAP[grid[fl][cc]])][1] != SOLID
                    for cc in (c, c + 1)):
                 continue
-            grid[top][c], grid[top][c + 1] = 'a', 'e'
-            grid[top + 1][c], grid[top + 1][c + 1] = 'c', 'q'
+            for rr, (lch, rch) in enumerate(
+                    (('a', 'e'), ('c', 'q'), ('o', 's'), ('A', 'B'))):
+                grid[top + rr][c] = lch
+                grid[top + rr][c + 1] = rch
             break
 
     # a pipe out of one wall, along a ceiling, elbow, and down into
@@ -745,7 +808,10 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
 
 
 def door_color(level, r, c):
-    return "XZQVN".index(level[r][c])
+    ch = level[r][c]                     # a rect's top cell is the
+    if ch in "DHIPS":                    # lintel; body cells are the
+        return "DHIPS".index(ch)         # classic XZQVN
+    return "XZQVN".index(ch)
 
 
 def vents(level, rng):
@@ -1037,7 +1103,7 @@ def generate_all():
             # with red while the walkthrough still holds spare red
             # cards (floor of 2 in both pool and bag, so no ordering
             # of door-opening can strand the player)
-            if idx >= 44:
+            if idx >= 36:
                 room = 3 - len(cross) - len(local_cols)
                 extra = 0
                 while extra < room and spare_pool[4] > 2 \
@@ -1072,7 +1138,8 @@ def generate_all():
                                          has_elev, has_med,
                                          cross, spares, local_cols,
                                          sow_switch, vids, below_vids,
-                                         obstacle=has_obst)
+                                         obstacle=has_obst,
+                                         down_hole=(idx >= 3))
                     verify(lv, plan, exit_col, f"L{idx}", inv_try, prs_try)
                     break
                 except AssertionError:
@@ -1190,7 +1257,7 @@ def main(asm_path, build_dir):
         w(f"\nLEVEL_COUNT     equ {len(levels)}\n")
         w("TILE_EMPTY      equ 0\n")
         w(f"TILE_KEY_BASE   equ {tile_index('keycard_g')}\n")
-        w(f"TILE_DOOR_BASE  equ {tile_index('door_g')}\n")
+        w(f"TILE_DOOR_BASE  equ {tile_index('door_body')}\n")
         w(f"TILE_MEDKIT     equ {tile_index('medkit')}\n")
         w(f"TILE_SWITCH_OFF equ {tile_index('switch_off')}\n")
         w(f"TILE_SWITCH_ON  equ {tile_index('switch_on')}\n")
