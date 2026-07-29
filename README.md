@@ -14,6 +14,108 @@ the light-flooded top. You are a bottom-level mechanic who has found a forbidden
 artifact proving the official history is a lie. There is only one way to the
 truth: **up**.
 
+## The demo disc
+
+A second, separate disc holds a scripted run for video capture. The
+mechanic is pinned to a fixed slot near the bottom of the frame and the
+world slides around him: he **walks out along the bottom floor**, climbs
+**a long ladder** (3 s), heads along the deck, **jumps a gap**, **waits
+out a steam vent**, **throws a switch**, climbs **a second ladder**,
+**pockets a yellow keycard** and walks through **the yellow door it
+opens** — 12.6 seconds in all. The one sound is a footstep built to a
+Locomotive BASIC reference (`ENV 1,3,-5,3` + `SOUND 1,0,2,15,1,0,n`):
+noise only, the noise period alternating 26 and 22 for the left and
+right boot — and a duration of 2, which cuts the envelope at its first
+step: one dry tick at volume 15, gone at the next update. It is struck
+ON the leg swap and cut in real 50 Hz frames, so neither its pace nor
+its length follows the redraw cost. It is built from the game's own
+tileset and compiled sprites; nothing is drawn twice.
+
+```sh
+./build_demo.sh     # -> build/theshaftdemo.dsk, then RUN"DEMO
+```
+
+![the opening walk](docs/demo_floor.png) ![the jump](docs/demo_jump.png)
+![the steam vent](docs/demo_steam.png) ![the door](docs/demo_door.png)
+
+A frame-accurate capture is in [docs/demo.mp4](docs/demo.mp4)
+(1280×720, 50 fps).
+
+**How it is framed and drawn.** CRTC R6 is cut to 19 character rows, so
+the active picture is a 152-line band — 1.754:1, within about a percent
+of 16:9. A full redraw of that band is ~420 tiles, roughly five frames'
+work, so the set is held as a sparse *object list* instead of a tilemap:
+each update erases every object at the camera position this buffer last
+saw and redraws it at the current one. Beats that change the set (the
+lever, the card, the door) just patch tile bytes in that list.
+`tools/demo_scene.py` simulates the whole script and refuses to emit a
+set that would break the frame budget (it peaks at 79 of an affordable
+80) or a run whose beats do not land the mechanic on the thing they are
+about — that the jump leaves before the hole and lands past it, that he
+waits clear of the vent, that the door's indicator light is the colour
+of the card he just took. The camera is 24-bit fixed point driven by
+the interrupt's 50 Hz frame count rather than by how long a redraw
+took, so the beats keep their timing even if the raster is missed.
+
+**Verifying without a CPC.** `tools/z80mini.py` is a Z80 subset big
+enough to *execute* the assembled binary, and `build_demo.sh` runs four
+harnesses over it:
+
+| | checks |
+|---|---|
+| `verify_demo.py` | the camera frame by frame, the set edits, and 54 rendered frames against an independent model, pixel for pixel |
+| `verify_demo_loop.py` | the **whole** update including the erase pass, proving it never writes outside the screen buffers |
+| `verify_demo_sfx.py` | the footstep against the BASIC spec: struck at 15, noise only, alternating 26/22 per boot, cut after its first envelope step and the channel closed — at every realistic update length |
+| `verify_demo_timeline.py` | the real main loop from `start:`, asserting what a **listener** would report: step rate, decay length, silence between |
+
+The middle one exists because it was missing: the first verifier only
+ever drove the draw half, so a wild row counter in the erase path
+reached a real CPC and reset it. `tools/demo_preview.py` renders the
+video the same way — the preview is the engine's own output, not a
+second implementation that could drift from it.
+
+## The manual and the sleeve
+
+Period documentation, in the style of a mid-80s Amstrad release:
+
+| | English | Ελληνικά |
+|---|---|---|
+| Manual (markdown) | [docs/manual.md](docs/manual.md) | [docs/manual.el.md](docs/manual.el.md) |
+| Manual (print, A5) | [docs/manual.pdf](docs/manual.pdf) | [docs/manual.el.pdf](docs/manual.el.pdf) |
+
+The 3" disc inlay — back face, spine and front cover on one sheet:
+[docs/cover.svg](docs/cover.svg) · [docs/cover.pdf](docs/cover.pdf)
+
+Regenerate the PDFs after editing the markdown:
+
+```sh
+python3 tools/manual_pdf.py docs/manual.md    docs/manual.pdf
+python3 tools/manual_pdf.py docs/manual.el.md docs/manual.el.pdf
+```
+
+Where a piracy warning would have gone, both the manual and the sleeve
+carry the opposite notice: **copying this disc is permitted and
+encouraged.** Software of this vintage survives only because people
+copied it.
+
+## Editing the sprites
+
+All 22 sprite frames are exported as ordinary PNGs in
+[art/sprites/](art/sprites/), with the 16 CPC pens as an editor
+palette ([art/cpc-pens.gpl](art/cpc-pens.gpl)). Edit them in any pixel
+editor — [art/README.md](art/README.md) has the workflow, the rules
+the importer enforces, and editor recommendations (Aseprite first).
+
+```sh
+python3 tools/sprite_export.py   # sprites_art.py -> art/sprites/*.png
+python3 tools/sprite_import.py   # ...and back, after editing
+./build.sh
+```
+
+The round trip is lossless, the importer rejects any colour that is
+not a CPC pen (naming the pixel and the nearest pen), and the frame
+order the compiled-sprite stub table depends on can never move.
+
 ## Building
 
 Requires [rasm](https://github.com/EdouardBERGE/rasm) and
@@ -39,7 +141,7 @@ face. **Down ducks** (debris and swings pass over your head), **Down +
 direction slides** — a fast low burst, one per press, momentum enough to
 carry you off an edge. Platforms have **jumpable gaps**: leap them, or
 drop through as a one-floor shortcut — but a fall of more than one floor
-costs a life (the landing stings, play continues where you hit).
+costs an energy point (the landing stings, play continues where you hit).
 Everyone faces where they walk: the mechanic has a two-frame leg cycle
 (walking, a back-view hand-over-hand cycle on ladders, and a stride pose
 mid-air), and patrollers carry shield or crowbar on their facing side.

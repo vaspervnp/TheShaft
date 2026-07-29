@@ -7,6 +7,10 @@ RASM="${RASM:-rasm}"
 IDSK="${IDSK:-iDSK}"
 
 mkdir -p build
+# WSL2 can leave a stale __pycache__ whose mtime matches a fresh edit;
+# python then imports PRE-EDIT modules and the build quietly uses old
+# art or maps.  Costed us twice -- purge it before any tool runs.
+rm -rf tools/__pycache__
 
 # Compile every sprite frame into draw-itself routines at #8000.
 python3 tools/sprite_compile.py > src/sprites_c.asm

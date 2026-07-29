@@ -1,0 +1,22 @@
+GIMP Palette
+Name: The Shaft - CPC pens (mechanical zone)
+Columns: 8
+# Pens marked ZONE-VARIES recolour in the agricultural
+# and administrative zones; sprites that must look the
+# same everywhere (the player) avoid them.
+  0   0   0	pen 00
+255 255 255	pen 01
+140 140 140	pen 02
+  0   0 128	pen 03
+  0 128 255	pen 04 ZONE-VARIES
+255   0   0	pen 05
+255 120   0	pen 06 ZONE-VARIES
+255 255   0	pen 07
+255 160 140	pen 08
+  0 255   0	pen 09
+  0 255 255	pen 10 ZONE-VARIES
+160   0 160	pen 11 ZONE-VARIES
+128   0   0	pen 12
+  0 128   0	pen 13 ZONE-VARIES
+128 128   0	pen 14 ZONE-VARIES
+128 128 255	pen 15 ZONE-VARIES
