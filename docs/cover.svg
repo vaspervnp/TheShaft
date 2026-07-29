@@ -1,0 +1,230 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="210mm" height="125mm"
+     viewBox="0 0 840 500">
+<title>THE SHAFT — Amstrad CPC 3" disc inlay</title>
+
+<defs>
+  <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+    <stop offset="0%"   stop-color="#ffd76b"/>
+    <stop offset="38%"  stop-color="#ff7a1a"/>
+    <stop offset="72%"  stop-color="#8c2a00"/>
+    <stop offset="100%" stop-color="#8c2a00" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="shaftbg" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%"   stop-color="#141d3a"/>
+    <stop offset="45%"  stop-color="#241a2e"/>
+    <stop offset="100%" stop-color="#0c0a16"/>
+  </linearGradient>
+  <linearGradient id="steel" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%"   stop-color="#5a6580"/>
+    <stop offset="50%"  stop-color="#39445e"/>
+    <stop offset="100%" stop-color="#222b40"/>
+  </linearGradient>
+  <linearGradient id="logo" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%"   stop-color="#ffe97a"/>
+    <stop offset="48%"  stop-color="#ffce1e"/>
+    <stop offset="52%"  stop-color="#ff9a12"/>
+    <stop offset="100%" stop-color="#e8720a"/>
+  </linearGradient>
+  <linearGradient id="pipe" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%"   stop-color="#3aa0bd"/>
+    <stop offset="50%"  stop-color="#1c6d84"/>
+    <stop offset="100%" stop-color="#0f4655"/>
+  </linearGradient>
+  <clipPath id="artwin"><rect x="452" y="96" width="376" height="292"/></clipPath>
+</defs>
+
+<rect width="840" height="500" fill="#07060f"/>
+
+<!-- ============================ BACK FACE ============================ -->
+<g>
+  <rect x="0" y="0" width="400" height="500" fill="#0b1020"/>
+  <rect x="0" y="0" width="400" height="46" fill="#0c1226"/>
+  <rect x="0" y="46" width="400" height="3" fill="#29b6d8"/>
+  <text x="24" y="31" font-family="Arial Black, Impact, sans-serif" font-size="20"
+        font-weight="900" letter-spacing="1.5" fill="#29b6d8">REVIVE8BIT</text>
+  <text x="376" y="31" text-anchor="end" font-family="Arial, sans-serif"
+        font-size="10" font-weight="700" letter-spacing="4" fill="#7f93b8">SOFTWARE</text>
+
+  <text x="24" y="86" font-family="Arial Black, Impact, sans-serif" font-size="19"
+        font-weight="900" fill="#ffce1e">NOBODY ALIVE HAS SEEN THE SKY.</text>
+
+  <g font-family="Arial, sans-serif" font-size="11.5" fill="#c9d3e6">
+    <text x="24" y="116">You keep the pumps alive at the bottom of a</text>
+    <text x="24" y="133">mile-deep concrete cylinder. The Broadcast says</text>
+    <text x="24" y="150">the surface is dead. Last week you found a box of</text>
+    <text x="24" y="167">photographs that says otherwise — green hills, a</text>
+    <text x="24" y="184">sun, and a log signed by an inspector who walked</text>
+    <text x="24" y="201">out of the top airlock and came back.</text>
+  </g>
+  <text x="24" y="230" font-family="Arial Black, Impact, sans-serif" font-size="14"
+        font-weight="900" fill="#ff8a2a">FIFTY-NINE LEVELS TO THE TRUTH.</text>
+
+  <g font-family="Arial, sans-serif" font-size="11" fill="#c9d3e6">
+    <text x="24" y="260">▪  59 screens across three zones — machine decks,</text>
+    <text x="40" y="276">agricultural terraces, administrative floors</text>
+    <text x="24" y="296">▪  Cable whip, duck and slide. Ballistic jumps with</text>
+    <text x="40" y="312">air control and mid-fall ladder grabs</text>
+    <text x="24" y="332">▪  Five colours of keycard, armoured doors, sealed</text>
+    <text x="40" y="348">vaults opened by switches on other levels</text>
+    <text x="24" y="368">▪  A shaft that remembers: doors stay open, cards</text>
+    <text x="40" y="384">stay taken, switches stay thrown</text>
+    <text x="24" y="404">▪  100% machine code. Compiled sprites, hardware</text>
+    <text x="40" y="420">double buffering, AY sound</text>
+  </g>
+
+  <!-- the notice that would have been a piracy warning -->
+  <rect x="20" y="436" width="360" height="46" fill="none" stroke="#ffce1e" stroke-width="2"/>
+  <text x="200" y="454" text-anchor="middle" font-family="Arial Black, Impact, sans-serif"
+        font-size="11.5" font-weight="900" letter-spacing="0.5" fill="#ffce1e">
+    COPYING IS PERMITTED — AND ENCOURAGED</text>
+  <text x="200" y="470" text-anchor="middle" font-family="Arial, sans-serif"
+        font-size="9.5" fill="#9fb0c8">
+    Lend it. Copy it. Upload it. Software survives only because people did.</text>
+</g>
+
+<!-- ============================== SPINE ============================== -->
+<g>
+  <rect x="400" y="0" width="40" height="500" fill="#c8202a"/>
+  <text transform="translate(426 250) rotate(90)" text-anchor="middle"
+        font-family="Arial Black, Impact, sans-serif" font-size="21" font-weight="900"
+        letter-spacing="3" fill="#ffce1e">THE SHAFT</text>
+  <text transform="translate(410 250) rotate(90)" text-anchor="middle"
+        font-family="Arial, sans-serif" font-size="9" font-weight="700"
+        letter-spacing="2" fill="#ffe9b0">CPC 6128</text>
+</g>
+
+<!-- ============================ FRONT FACE =========================== -->
+<g>
+  <rect x="440" y="0" width="400" height="500" fill="#07060f"/>
+
+  <!-- publisher band -->
+  <rect x="452" y="14" width="376" height="60" fill="#0c1226"/>
+  <rect x="452" y="70" width="376" height="4" fill="#29b6d8"/>
+  <circle cx="482" cy="44" r="12" fill="none" stroke="#29b6d8" stroke-width="3.4"/>
+  <circle cx="482" cy="44" r="4" fill="#29b6d8"/>
+  <circle cx="798" cy="44" r="12" fill="none" stroke="#29b6d8" stroke-width="3.4"/>
+  <circle cx="798" cy="44" r="4" fill="#29b6d8"/>
+  <text x="640" y="43" text-anchor="middle" font-family="Arial Black, Impact, sans-serif"
+        font-size="24" font-weight="900" letter-spacing="1.5" fill="#29b6d8">REVIVE8BIT</text>
+  <text x="640" y="61" text-anchor="middle" font-family="Arial, sans-serif" font-size="9"
+        font-weight="700" letter-spacing="6" fill="#7f93b8">S O F T W A R E</text>
+
+  <!-- ====================== the illustration ====================== -->
+  <g clip-path="url(#artwin)">
+    <rect x="452" y="96" width="376" height="292" fill="url(#shaftbg)"/>
+    <circle cx="648" cy="240" r="150" fill="url(#glow)"/>
+
+    <!-- shaft walls -->
+    <rect x="452" y="96" width="44" height="292" fill="url(#steel)"/>
+    <rect x="784" y="96" width="44" height="292" fill="url(#steel)"/>
+    <g fill="#151c30">
+      <circle cx="462" cy="118" r="2.6"/><circle cx="486" cy="118" r="2.6"/>
+      <circle cx="462" cy="200" r="2.6"/><circle cx="486" cy="200" r="2.6"/>
+      <circle cx="462" cy="300" r="2.6"/><circle cx="486" cy="300" r="2.6"/>
+      <circle cx="462" cy="370" r="2.6"/><circle cx="486" cy="370" r="2.6"/>
+      <circle cx="794" cy="118" r="2.6"/><circle cx="818" cy="118" r="2.6"/>
+      <circle cx="794" cy="240" r="2.6"/><circle cx="818" cy="240" r="2.6"/>
+      <circle cx="794" cy="370" r="2.6"/><circle cx="818" cy="370" r="2.6"/>
+    </g>
+    <rect x="452" y="150" width="44" height="9" fill="#ffb020"/>
+    <rect x="784" y="150" width="44" height="9" fill="#ffb020"/>
+    <g fill="#0c0a16">
+      <rect x="456" y="150" width="9" height="9"/><rect x="474" y="150" width="9" height="9"/>
+      <rect x="788" y="150" width="9" height="9"/><rect x="806" y="150" width="9" height="9"/>
+    </g>
+
+    <!-- plumbing -->
+    <rect x="716" y="150" width="12" height="238" fill="url(#pipe)"/>
+    <path d="M716 172 Q716 150 696 150 L668 150" stroke="url(#pipe)" stroke-width="12" fill="none"/>
+
+    <!-- the turbine -->
+    <g transform="translate(648 240)">
+      <circle r="136" fill="none" stroke="#1b2540" stroke-width="9" opacity="0.6"/>
+      <g fill="#455072" stroke="#141b2e" stroke-width="1.4">
+        <polygon points="-8,-5 8,-5 18,-116 0,-127 -18,-116"/>
+        <polygon points="-8,-5 8,-5 18,-116 0,-127 -18,-116" transform="rotate(45)"/>
+        <polygon points="-8,-5 8,-5 18,-116 0,-127 -18,-116" transform="rotate(90)"/>
+        <polygon points="-8,-5 8,-5 18,-116 0,-127 -18,-116" transform="rotate(135)"/>
+        <polygon points="-8,-5 8,-5 18,-116 0,-127 -18,-116" transform="rotate(180)"/>
+        <polygon points="-8,-5 8,-5 18,-116 0,-127 -18,-116" transform="rotate(225)"/>
+        <polygon points="-8,-5 8,-5 18,-116 0,-127 -18,-116" transform="rotate(270)"/>
+        <polygon points="-8,-5 8,-5 18,-116 0,-127 -18,-116" transform="rotate(315)"/>
+      </g>
+      <circle r="31" fill="#6b7690" stroke="#232c44" stroke-width="3.5"/>
+      <circle r="17" fill="#ffd21e"/>
+      <circle r="8"  fill="#ff5a1a"/>
+    </g>
+
+    <!-- sparks and steam -->
+    <g fill="#ffe27a">
+      <circle cx="560" cy="190" r="2.2"/><circle cx="756" cy="300" r="1.8"/>
+      <circle cx="720" cy="196" r="2.2"/><circle cx="580" cy="330" r="1.8"/>
+    </g>
+    <g opacity="0.45" fill="#dfe6f0">
+      <circle cx="520" cy="352" r="12"/><circle cx="534" cy="346" r="16"/>
+      <circle cx="548" cy="354" r="11"/>
+    </g>
+
+    <!-- ladder -->
+    <g>
+      <rect x="524" y="248" width="24" height="140" fill="#c24d00"/>
+      <rect x="524" y="248" width="5" height="140" fill="#ff8a2a"/>
+      <g stroke="#ff9a3a" stroke-width="4.5">
+        <line x1="524" y1="266" x2="548" y2="266"/><line x1="524" y1="294" x2="548" y2="294"/>
+        <line x1="524" y1="322" x2="548" y2="322"/><line x1="524" y1="350" x2="548" y2="350"/>
+      </g>
+    </g>
+
+    <!-- a walkway with the guard on it -->
+    <rect x="700" y="236" width="128" height="12" fill="#2a3350"/>
+    <g>
+      <rect x="734" y="196" width="27" height="40" rx="3.5" fill="#2c3654"/>
+      <circle cx="748" cy="192" r="14" fill="#3a4666"/>
+      <rect x="741" y="188" width="13" height="4.5" rx="2" fill="#ff3a3a"/>
+      <rect x="721" y="199" width="15" height="37" rx="5" fill="#5b6a8c"/>
+      <circle cx="728" cy="214" r="3.6" fill="#cfe0ff"/>
+    </g>
+
+    <!-- the mechanic, whip out -->
+    <g>
+      <rect x="560" y="330" width="11" height="38" rx="3" fill="#242c46"/>
+      <rect x="578" y="330" width="11" height="38" rx="3" fill="#242c46"/>
+      <rect x="560" y="362" width="13" height="7" rx="2" fill="#c9a24a"/>
+      <rect x="576" y="362" width="13" height="7" rx="2" fill="#c9a24a"/>
+      <path d="M558 296 h34 v31 q0 7 -7 7 h-19 q-8 0 -8 -7 z" fill="#2f5db0"/>
+      <path d="M558 296 h9 v38 h-9 z" fill="#26489a"/>
+      <rect x="560" y="292" width="30" height="7" fill="#c8202a"/>
+      <path d="M566 281 q9 -9 20 0 l3 13 h-26 z" fill="#7d8698"/>
+      <circle cx="575" cy="285" r="5.4" fill="#454e60"/>
+      <rect x="585" y="280" width="7" height="5.4" rx="2" fill="#fff2a0"/>
+      <path d="M572 300 q24 -6 42 -20" stroke="#7d8698" stroke-width="6.4" fill="none"
+            stroke-linecap="round"/>
+    </g>
+
+    <!-- the whip, mid-crack -->
+    <path d="M612 278 Q560 214 648 184 T744 168" stroke="#ffe27a" stroke-width="3.4"
+          fill="none" stroke-linecap="round"/>
+  </g>
+
+  <!-- ========================= the logo ========================= -->
+  <g font-family="Arial Black, Impact, sans-serif" font-weight="900" text-anchor="middle">
+    <text x="644" y="408" font-size="24" letter-spacing="9" fill="#0a0a16">THE</text>
+    <text x="641" y="405" font-size="24" letter-spacing="9" fill="#f4f4ec">THE</text>
+    <text x="646" y="474" font-size="74" letter-spacing="2" fill="#7a0f12">SHAFT</text>
+    <text x="641" y="470" font-size="74" letter-spacing="2" fill="url(#logo)"
+          stroke="#7a0f12" stroke-width="1.6">SHAFT</text>
+  </g>
+
+  <!-- machine flash -->
+  <g transform="rotate(-10 795 116)">
+    <rect x="742" y="96" width="106" height="40" rx="4" fill="#ffce1e" stroke="#c8202a" stroke-width="2.4"/>
+    <text x="795" y="112" text-anchor="middle" font-family="Arial Black, Impact, sans-serif"
+          font-size="13" font-weight="900" fill="#c8202a">AMSTRAD</text>
+    <text x="795" y="127" text-anchor="middle" font-family="Arial, sans-serif"
+          font-size="10.5" font-weight="700" fill="#7a0f12">CPC 6128 · 3&#8243;</text>
+  </g>
+</g>
+
+<!-- trim border for the whole inlay -->
+<rect x="1" y="1" width="838" height="498" fill="none" stroke="#2a2a38" stroke-width="1"/>
+</svg>
