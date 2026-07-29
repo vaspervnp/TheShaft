@@ -263,8 +263,8 @@ gl_no_fdesc:
         call nz,take_fall_hit
         call check_elevator     ; standing at a lift door + Up/Down?
         call update_entities    ; patrols, throwers, falling debris
-        ld a,(lasso_timer)      ; whip thrown this frame? resolve it
-        cp LASSO_TIME           ; against the just-moved enemies
+        ld a,(lasso_timer)      ; the thong out at full stretch? resolve
+        cp LASSO_TIME-4         ; the crack against the just-moved foes
         call z,lasso_hits
         call update_leaks       ; ceiling pipes shed their drops
         call update_vents       ; steam nozzles on the 300 Hz clock
@@ -3308,6 +3308,24 @@ re_no_arrow:
         ret c                   ; recoiled: nothing to draw
         call lasso_box          ; B,C,D,E = this direction's reach
         ret nc
+        ld a,(lasso_dir)        ; the side crack swings a whole arc, so
+        or a                    ; its restore box is the arc's envelope
+        jr nz,wb_keep           ; (restore_area clips to the map)
+        ld a,(player_x)
+        sub 8
+        jr nc,wb_x
+        xor a
+wb_x:
+        ld b,a
+        ld a,(player_y)
+        sub 8
+        jr nc,wb_y
+        xor a
+wb_y:
+        ld c,a
+        ld d,22
+        ld e,22
+wb_keep:
         ld hl,lasso_prev        ; remember the whole box for restore
         ld a,(buf_index)
         push bc
@@ -3333,7 +3351,7 @@ re_no_arrow:
         ld (hl),e
         ld a,(lasso_dir)
         or a
-        jr z,rope_horiz
+        jp z,whip_arc           ; the side crack: an arc, not a line
         dec a
         jr z,rope_up
         ; --- the diagonal: stepped 1x2 segments climbing forward
@@ -3389,13 +3407,72 @@ rope_up:
         ld d,1                  ; a thin line straight up
         ld a,#FC
         jp fill_rect
-rope_horiz:
+; ----------------------------------------------------------------------
+; whip_arc -- the crack, drawn as an ARC.  The thong starts coiled
+; behind the shoulder, unwinds up over the head, then snaps out to
+; full reach in front.  whip_tab holds six phases of (fx,fy) segments
+; in FORWARD coordinates (fx grows the way we face); #80 ends a phase.
+; The hit resolves on the extended phase, so the crack lands where the
+; thong is actually drawn.
+; ----------------------------------------------------------------------
+whip_arc:
+        ld a,(lasso_timer)
+        ld b,a
+        ld a,LASSO_TIME
+        sub b                   ; A = phase 0..5, 0 = still coiled
+        ld hl,whip_tab
+        or a
+        jr z,wa_seg
+        ld b,a
+wa_skip:
+        ld a,(hl)               ; walk past B whole phases
+        inc hl
+        cp #80
+        jr nz,wa_skip
+        djnz wa_skip
+wa_seg:
+        ld a,(hl)
+        cp #80
+        ret z                   ; this phase is fully drawn
+        inc hl
+        ld c,a                  ; C = fx (signed, forward)
+        ld a,(hl)
+        inc hl
+        ld d,a                  ; D = fy (signed, downward)
+        push hl
+        ld a,(player_facing)
+        or a
+        ld a,(player_x)
+        jr z,wa_fwd
+        add a,3                 ; facing left: mirror across the body
+        sub c
+        jr wa_x
+wa_fwd:
+        add a,c
+wa_x:
+        cp SCR_W_BYTES
+        jr nc,wa_next           ; off either edge (negatives wrap high)
+        ld b,a
         ld a,(player_y)
-        add a,6                 ; ride at arm height
+        add a,d
+        cp 198
+        jr nc,wa_next
         ld c,a
+        ld d,1                  ; one byte, two lines: a fat thong link
         ld e,2
-        ld a,#FC
-        jp fill_rect
+        ld a,#FC                ; pen 7
+        call fill_rect
+wa_next:
+        pop hl
+        jr wa_seg
+
+whip_tab:                       ; (fx,fy) pairs, #80 closes each phase
+        defb -1,5, -2,4, -3,5, -3,7, -2,8, -1,7, #80
+        defb -2,2, -2,0, -1,-2, 0,-4, #80
+        defb -1,-3, 1,-5, 3,-6, 5,-5, #80
+        defb 3,-4, 5,-2, 7,1, 8,4, #80
+        defb 4,6, 5,6, 6,6, 7,6, 8,6, 9,6, 10,6, 11,6, #80
+        defb 4,6, 5,6, 6,6, 7,6, #80
 
 ; entity_sprite -- DE = sprite frame for the entity at IX
 entity_sprite:
@@ -3975,6 +4052,26 @@ draw_text:
         add a,4                 ; one char = 4 Mode 0 bytes
         ld b,a
         jr draw_text
+; draw_text_narrow -- as draw_text but a 3-byte (6px) step, so a longer
+; line fits the 80-byte width.  Glyph ink lives in pixel cols 1-5, so
+; the overwritten trailing 2px carry no ink and a 1px gap survives.
+draw_text_narrow:
+        ld a,(hl)
+        or a
+        ret z
+        inc hl
+        push hl
+        push bc
+        push de
+        call ascii_to_glyph
+        call draw_char
+        pop de
+        pop bc
+        pop hl
+        ld a,b
+        add a,3
+        ld b,a
+        jr draw_text_narrow
 draw_text_2x:
         ld a,(hl)
         or a
@@ -4192,7 +4289,7 @@ ms_loop:
         ld e,0                  ; ...black off (opaque glyphs erase)
 ms_blink:
         ld hl,txt_press
-        ld b,2
+        ld b,0                  ; 20 chars fills the width exactly
         ld c,120
         call draw_text
         ld a,(input_new)
@@ -4251,17 +4348,32 @@ draw_menu_page:                 ; backdrop + text + diorama, one buffer
         ld c,64
         ld e,10                 ; bright cyan
         call draw_text
-        ld hl,txt_credit
-        ld b,6                  ; bottom middle
+        ld hl,txt_ctl1          ; controls legend, narrow font
+        ld b,3
+        ld c,88
+        ld e,1                  ; white
+        call draw_text_narrow
+        ld hl,txt_ctl2
+        ld b,3
+        ld c,96
+        ld e,1
+        call draw_text_narrow
+        ld hl,txt_ctl3
+        ld b,11
+        ld c,104
+        ld e,1
+        call draw_text_narrow
+        ld hl,txt_credit_menu
+        ld b,0                  ; bottom, near full width at a tight step
         ld c,184
         ld e,2                  ; steel grey
-        call draw_text
+        call draw_text_narrow
         ld b,36                 ; the mechanic, on the crate stack
         ld c,128
         ld de,spr_mech_r
         call draw_sprite_8x16
-        ld b,56                 ; a riot guard watching from the dark,
-        ld c,88                 ; facing our hero
+        ld b,44                 ; a riot guard on the crate, squared up
+        ld c,128                ; against our hero -- a face-off diorama
         ld de,spr_riot_l
         jp draw_sprite_8x16
 
@@ -4657,8 +4769,12 @@ int_stub_end:
 ; ----------------------------------------------------------------------
 txt_title:      defb "THE SHAFT",0
 txt_tag:        defb "THE TRUTH IS ABOVE",0
-txt_press:      defb "PRESS FIRE TO START",0
+txt_press:      defb "PRESS SPACE TO START",0
+txt_ctl1:       defb "CURSORS - MOVE AND CLIMB",0
+txt_ctl2:       defb "SPACE - JUMP   Z - LASSO",0
+txt_ctl3:       defb "DOWN - DUCK - SLIDE",0
 txt_credit:     defb "REVIVE8BIT - 2026",0
+txt_credit_menu: defb "REVIVE8BIT - 2026 - VASPER",0
 txt_end_t:      defb "THE AIRLOCK",0
 txt_end_1a:     defb "THE SEAL GRINDS OPEN",0
 txt_end_1b:     defb "COLD AIR RUSHES IN",0
