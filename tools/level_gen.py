@@ -15,7 +15,8 @@ Produces:
 
 THE SHAFT has three zones, 59 levels total:
     1-19   Mechanical  (the machine decks; riot guards)
-    20-39  Agricultural (hydroponics terraces; throwers + coats)
+    20-39  Agricultural (hydroponics terraces; throwers + coats,
+           and the odd rifle-carrying riot guard)
     40-59  Administrative (the elite levels; everything, faster)
 
 Levels 2..59 are generated procedurally from a seeded RNG around a
@@ -324,8 +325,8 @@ LEVEL1 = [
     "W5..0..6..L........W",
     "W5779886..L........W",
     "W5..0..6..L........W",
-    "W5779CC6..L.....E..W",
-    "Wh..0CC6..L.....E.hW",
+    "W5779CC6..L.....EE.W",
+    "Wh..0CC6..L.....EEhW",
     "FFFFFFFFFFFFFFFFFFFF",
 ]
 
@@ -643,15 +644,23 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
                     gaps.append((p, g, 2))
                     break
 
-    # the elevator door on the bottom floor (levels 1, 10, 20, ...)
+    # the elevator door on the bottom floor (levels 1, 10, 20, ...):
+    # double doors, two tiles wide -- and the row above stays clear,
+    # because the engine paints a seven-segment floor readout there
     elev_col = None
     if elevator:
         for _ in range(40):
-            c = rng.randrange(3, 17)
-            if abs(c - l0) >= 3 and grid[22][c] == '.' and grid[23][c] == '.':
-                grid[22][c] = grid[23][c] = 'E'
+            c = rng.randrange(3, 16)
+            if (abs(c - l0) >= 3 and abs(c + 1 - l0) >= 3
+                    and all(grid[r][cc] == '.'
+                            for r in (21, 22, 23) for cc in (c, c + 1))):
+                for cc in (c, c + 1):
+                    grid[22][cc] = grid[23][cc] = 'E'
                 elev_col = c
                 break
+        # a stop level MUST get its doors -- fail loudly and let the
+        # caller reroll the layout, never ship a lift-less stop
+        assert elev_col is not None, "no room for the elevator doors"
 
     # a medical crate at body height, somewhere on the platforms
     if medkit:
@@ -690,7 +699,9 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
 
     # enemies on the platforms (never the floor: respawns land there)
     n_enemies = min(3, 1 + difficulty // 6 + (1 if zone == 2 else 0))
-    mix = {0: 'RRG', 1: 'TGT', 2: 'RGT'}[zone]
+    # every zone keeps some riot guards: from level 10 they carry
+    # rifles, and the ramp to "all of them shoot" must not skip a zone
+    mix = {0: 'RRG', 1: 'TGRT', 2: 'RGT'}[zone]
     placed = 0
     for _ in range(80):
         if placed >= n_enemies:

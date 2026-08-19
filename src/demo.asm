@@ -47,8 +47,10 @@ E_KEY           equ 2
 E_DOOR          equ 3
 E_STEAM         equ 4           ; ...or for how long the vent blows
 
-STEP_FRAMES     equ 14          ; 50 Hz / 14 = 3.6 footfalls a second
-STEP_ARM        equ 6           ; ...and the first one lands promptly
+SFX_JUMP        equ 1           ; the game's rising leap chirp
+SFX_PING        equ 2           ; ...and its keycard/door/switch ding
+
+BEAT_FRAMES     equ 10          ; one strike every 10 real frames
 
         org #1000
 
@@ -97,11 +99,12 @@ start:
 ; ----------------------------------------------------------------------
 demo_restart:
         xor a
-        ld (walk_phase),a
+        ld (beat_phase),a
         ld (env_pos),a
-        call snd_off            ; a step may still be decaying, and the
-        ld a,STEP_ARM           ; branch into here skips snd_update
-        ld (step_timer),a
+        ld (sfx_timer),a
+        call snd_off            ; a strike may still be decaying, and
+        ld a,BEAT_FRAMES        ; the branch into here skips env_update
+        ld (beat_timer),a
         call scene_reset        ; put back the switch, card and door
         ld hl,demo_script
         ld (seg_ptr),hl
@@ -164,8 +167,9 @@ main_loop:
         call object_pass
         call draw_steam
         call draw_hero
-        call snd_update         ; decay the ringing step FIRST, or one
-        call walk_anim          ; struck this update would be eaten
+        call sfx_update         ; the chirp and the ding come first;
+        call env_update         ; then the click's decay, then maybe
+        call beat_tick          ; a new strike (which yields to them)
 
         call prev_slot          ; remember where this buffer stands
         ld de,(cam_ix)
@@ -323,6 +327,12 @@ sl_end:
 
 ; do_event -- one-shot edits to the set, plus the steam's on/off gate
 do_event:
+        ld a,(seg_anim)         ; a leap announces itself the moment
+        cp A_JUMP               ; its beat begins, like the game's
+        jr nz,de_no_jump
+        ld a,SFX_JUMP
+        call sfx_start
+de_no_jump:
         ld a,(seg_event)
         cp E_STEAM
         ld hl,steam_on
@@ -340,14 +350,18 @@ de_not_steam:
         ld hl,demo_door_offs    ; the door swings open.  Its five cells
         ld b,DEMO_DOOR_N        ; are scattered through the list, so
         xor a                   ; walk the offsets the tool emitted
-        jp door_write
+        call door_write
+        jr de_ping
 de_switch:
         ld hl,demo_objects+DEMO_SW_OFF
         ld (hl),DEMO_SW_TILE    ; lever down -> lever up, and green
-        ret
+        jr de_ping
 de_key:
         ld hl,demo_objects+DEMO_KEY_OFF
         ld (hl),0               ; pocketed
+de_ping:
+        ld a,SFX_PING           ; the game dings for all three
+        call sfx_start
         ret
 
 ; scene_reset -- put the set back the way the script expects to find it
@@ -698,9 +712,9 @@ hero_frame:
         ld a,(seg_anim)
         or a
         jr nz,hf_walk
-        ld de,spr_mech_climb    ; on the rails, seen from behind
-        ld a,(anim_ctr)
-        and 8
+        ld de,spr_mech_climb    ; on the rails, seen from behind; the
+        ld a,(beat_phase)       ; hands swap ON the beat, so each strike
+        and 4                   ; is the grab of the next rung
         ret z
         inc de                  ; frame B is always the stub + 4
         inc de
@@ -715,9 +729,9 @@ hf_walk:
         cp A_RIGHT              ; the way he is travelling
         ret nz                  ; jump/stand hold frame A
 hf_step:
-        ld a,(walk_phase)       ; set by the footfall, not by the update
-        and 4                   ; counter (the climb still uses anim_ctr:
-        ret z                   ; a rung is not a footfall)
+        ld a,(beat_phase)       ; the beat picks the leg, so while he
+        and 4                   ; walks the sound IS the footfall (the
+        ret z                   ; climb still steps off anim_ctr)
         inc de
         inc de
         inc de
@@ -824,81 +838,157 @@ br_row:
         ret
 
 ; ======================================================================
-; The footstep, to the user's own Locomotive BASIC spec:
+; The metronome, to the user's spec: every 10 frames, alternately
 ;
-;       ENV 1, 3, -5, 3
-;       SOUND 1, 0, 2, 15, 1, 0, n      with n = 26 / 22 per foot
+;       SOUND 1, 0, 3, 8, 1, 1, 0
+;       SOUND 1, 0, 3, 8, 1, 2, 0             (ENV 1, 3, -5, 3)
 ;
-; That is: NOISE only (pitch 0), the noise period alternating 26 and 22
-; for the left and right boot -- and a duration of 2/100 s, which cuts
-; the envelope at its very first step: a single dry tick at volume 15,
-; roughly one frame long.  The strike happens ON the leg swap, so the
-; sound and the feet are one event; the cut is counted in real 50 Hz
-; frames so neither pace nor length follows the redraw cost.
+; Tone period 0 and noise 0: NEITHER generator runs, so what sounds is
+; the AY's DC step -- the channel sits at a constant level set by the
+; volume, and each volume change is a soft CLICK (the digidrum trick).
+; Duration 3 is exactly one envelope step: level 8 for ~30 ms, then
+; zero.  With no tone there is nothing for the ENT number to shape, so
+; the two SOUNDs are acoustically identical; the alternation lives on
+; in the animation, swapping the walking legs and the climbing hands
+; on every strike.  Everything is counted in real 50 Hz frames.
 ; ======================================================================
-walk_anim:
-        ld a,(seg_anim)
-        cp A_RIGHT
-        jr z,wk_walk
+beat_tick:
+        ld a,(seg_anim)         ; only movement keeps the beat: walking
+        cp A_RIGHT              ; either way, or on the ladder
+        jr z,bt_run
         cp A_LEFT
-        jr z,wk_walk
-        ld a,STEP_ARM           ; not walking: the first step of the next
-        ld (step_timer),a       ; walk lands promptly
+        jr z,bt_run
+        cp A_CLIMB
+        jr z,bt_run
+        ld a,BEAT_FRAMES        ; standing or mid-jump: the beat rests,
+        ld (beat_timer),a       ; armed for when he moves again
         ret
-wk_walk:
-        ld hl,step_timer
+bt_run:
+        ld hl,beat_timer
         ld a,(frames_now)
         ld b,a
         ld a,(hl)
         sub b
-        jr c,wk_now
-        jr z,wk_now
+        jr z,bt_fire
+        jr c,bt_fire
         ld (hl),a
         ret
-wk_now:
-        ld (hl),STEP_FRAMES
-        ld hl,walk_phase
+bt_fire:
+        add a,BEAT_FRAMES       ; keep the remainder, so the long-run
+        ld (hl),a               ; period is exactly 15 frames
+        ld hl,beat_phase
         ld a,(hl)
-        xor 4                   ; bit 2 picks the leg frame
+        xor 4                   ; the legs swap ON the beat
         ld (hl),a
-        ; ---- strike: SOUND 1,0,..,15,ENV1,0,n
-        ld e,26                 ; n: the left boot...
-        and 4
-        jr z,wk_n
-        ld e,22                 ; ...and the right, a shade higher
-wk_n:
-        ld a,6
-        call psg_write          ; R6 = noise period
+bt_n:
+        ld a,(sfx_timer)        ; a chirp or a ding owns the channel:
+        or a                    ; the click stands aside (the legs have
+        ret nz                  ; already swapped above)
         ld a,7
-        ld e,#37                ; R7: noise on A alone, bit 6 clear
-        call psg_write
+        ld e,#3F                ; R7: BOTH generators off -- the output
+        call psg_write          ;     is the DC level, bit 6 clear
         ld a,8
-        ld e,15                 ; R8: the envelope's first step
-        call psg_write
+        ld e,8                  ; R8: the level jumps to 8: a soft click.
+        call psg_write          ;     It drops back ~30 ms later: click
         ld a,1
-        ld (env_pos),a          ; the decay starts next update
+        ld (env_pos),a
         ret
 
-; snd_update -- walk the ENV 1,3,-5,3 table in real frames
-snd_update:
+; ======================================================================
+; One-shot effects, register for register the game's own recipes:
+;   JUMP: a square tone whose period shrinks each frame -- the pitch
+;         RISES as he leaves the deck (period timer*16+60)
+;   PING: a steady high tone (period 40), volume fading 14 -> 7
+; Both count REAL frames, and both own the channel while they ring:
+; the walking click stands aside, and any ringing click is cut.
+; ======================================================================
+sfx_start:                      ; A = SFX_*
+        ld (sfx_type),a
+        ld hl,sfx_len-1
+        add a,l
+        ld l,a
+        jr nc,sx_nc
+        inc h
+sx_nc:
+        ld a,(hl)
+        ld (sfx_timer),a
+        xor a
+        ld (env_pos),a          ; a mid-ring click would fight the tone
+        ret
+
+sfx_update:                     ; once per update, in real frames
+        ld a,(sfx_timer)
+        or a
+        ret z
+        ld hl,frames_now
+        sub (hl)
+        jr nc,sx_live
+        xor a
+sx_live:
+        ld (sfx_timer),a
+        jp z,snd_off            ; spent: close the channel
+        ld a,(sfx_type)
+        dec a
+        jr z,sfxu_jump
+        ; ---- PING: period 40, fading
+        xor a
+        ld e,40
+        call psg_write          ; R0
+        ld a,1
+        ld e,0
+        call psg_write          ; R1
+        ld a,7
+        ld e,#3E                ; tone on A alone
+        call psg_write
+        ld a,(sfx_timer)        ; NOT a register: psg_write eats B, and
+        add a,6                 ; a stale B once put 252 -- envelope
+        ld e,a                  ; bit set! -- into R8
+        ld a,8
+        jp psg_write
+sfxu_jump:
+        ; ---- JUMP: the period shrinks as the timer runs out
+        ld a,(sfx_timer)
+        add a,a
+        add a,a
+        add a,a
+        add a,a
+        add a,60                ; 236 down to 76: the pitch climbs
+        ld e,a
+        xor a
+        call psg_write          ; R0
+        ld a,1
+        ld e,0
+        call psg_write          ; R1
+        ld a,7
+        ld e,#3E                ; tone on A alone
+        call psg_write
+        ld a,8
+        ld e,12
+        jp psg_write
+
+sfx_len:
+        defb 11,8               ; frames: JUMP, PING (the game's lengths)
+
+; env_update -- ENV 1,3,-5,3, stepped in real frames
+env_update:
         ld a,(env_pos)
         or a
         ret z                   ; nothing ringing
         ld hl,frames_now
         add a,(hl)              ; the decay is TIME, not updates
         cp env_len+1
-        jr nc,snd_off_p
+        jr nc,env_end
         ld (env_pos),a
         ld hl,env_tab-1
         add a,l
         ld l,a
-        jr nc,su_nc
+        jr nc,eu_nc
         inc h
-su_nc:
+eu_nc:
         ld e,(hl)
         ld a,8
         jp psg_write            ; just the volume: R6/R7 stay latched
-snd_off_p:
+env_end:
         xor a
         ld (env_pos),a
 snd_off:
@@ -909,12 +999,10 @@ snd_off:
         ld e,#3F                ; ...and the mixer closed
         jp psg_write
 
-; SOUND ...,2,...: the note ends after 2/100 s, so only the envelope's
-; first step (15) is ever heard -- the table below is one entry and the
-; next update closes the channel.
+; duration 3 = one envelope step: the level holds ~30-40 ms, then drops
 env_tab:
-        defb 15
-env_len equ 1
+        defb 8,8
+env_len equ 2
 
 ay_init:
         ld a,7
@@ -1101,10 +1189,12 @@ seg_anim:       defb 0
 seg_event:      defb 0
 seg_elapsed:    defb 0
 anim_ctr:       defb 0
-walk_phase:     defb 0          ; bit 2 picks the leg, flipped per footfall
+beat_phase:     defb 0          ; bit 2: the leg, and 22 vs 26, per beat
+beat_timer:     defb BEAT_FRAMES
 env_pos:        defb 0          ; elapsed frames into the decay; 0 = quiet
+sfx_type:       defb 0          ; 1 = jump chirp, 2 = ping
+sfx_timer:      defb 0          ; frames left; 0 = free
 frames_now:     defb 1          ; 50 Hz frames covered by this update
-step_timer:     defb STEP_ARM   ; frames until the next footfall
 dt_srow:        defb 0
 dt_scol:        defb 0
 dt_rows:        defb 0

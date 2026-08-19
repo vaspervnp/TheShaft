@@ -20,7 +20,27 @@ python3 tools/sprite_compile.py > src/sprites_c.asm
 python3 tools/level_gen.py src/levels.asm build
 
 # Assemble to a raw binary (org #1000 is set in the source).
-"$RASM" src/main.asm -ob build/shaft.bin
+"$RASM" src/main.asm -ob build/shaft.bin -os build/shaft.sym -s
+
+# Execute the assembled music player: the title theme must lock its
+# 15-second loop on the right AY registers with a keyboard-safe mixer.
+python3 tools/verify_music.py
+
+# ...and the footsteps: a quiet click every 5 walking frames that never
+# clips a ringing effect and never sounds in the air or on a ladder.
+python3 tools/verify_steps.py
+
+# ...and the enemies: the rifle ramp from level 10, the duck under the
+# bullet, the drone dispatch from 20 and the whip aims that reach it.
+python3 tools/verify_enemies.py
+
+# ...and the attract loop: both pages land in both buffers, the
+# exhibits leave the prompt's lines black.
+python3 tools/verify_menu.py
+
+# ...and the lift: the LED floor readout decoded off the screen, the
+# double doors' catchment, LVL in front of the HUD's number.
+python3 tools/verify_lift.py
 
 # BASIC loader: AMSDOS ASCII wants CR/LF line ends and a ^Z EOF marker.
 awk '{printf "%s\r\n", $0}' src/shaft.bas > build/shaft.bas

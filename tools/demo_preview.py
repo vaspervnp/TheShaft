@@ -85,7 +85,7 @@ def main(dst):
         run(z, S("ADVANCE_CAMERA"))
         if z.fc:
             break
-        run(Z80(), S("WALK_ANIM"))      # the leg swap lives here now
+        run(Z80(), S("BEAT_TICK"))      # legs and hands swap on the beat
         draw(fr & 0xFF)
         # A CPC line is taller than a doubled Mode 0 pixel is wide, so
         # the 160x152 band shows as 1.754:1; 1280x720 lands on 16:9 with

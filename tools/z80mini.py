@@ -110,6 +110,12 @@ class Z80:
                 d = self.n()
                 return (v + (d - 256 if d > 127 else d)) & 0xFFFF
             if o2 == 0x21: setattr(self, idx, self.nn())
+            elif o2 == 0x2A:
+                a = self.nn()
+                setattr(self, idx, MEM[a] | MEM[a + 1] << 8)
+            elif o2 == 0x22:
+                a = self.nn()
+                MEM[a] = v & 0xFF; MEM[a + 1] = v >> 8
             elif o2 == 0x23: setattr(self, idx, (v + 1) & 0xFFFF)
             elif o2 == 0x2B: setattr(self, idx, (v - 1) & 0xFFFF)
             elif o2 == 0x19: setattr(self, idx, (v + self.de()) & 0xFFFF)
@@ -121,6 +127,23 @@ class Z80:
                 a = disp(); MEM[a] = self.getr(o2 & 7)
             elif o2 == 0x36:
                 a = disp(); MEM[a] = self.n()
+            elif o2 in (0x34, 0x35):                  # INC / DEC (ix+d)
+                a = disp()
+                w = (MEM[a] + (1 if o2 == 0x34 else -1)) & 0xFF
+                MEM[a] = w
+                self.fz = w == 0; self.fs = bool(w & 0x80)
+            elif o2 == 0xCB:                          # BIT/RES/SET (ix+d)
+                a = disp()
+                o3 = self.n()
+                bitn = (o3 >> 3) & 7
+                if o3 & 0xC0 == 0x40:
+                    self.fz = not (MEM[a] >> bitn) & 1
+                elif o3 & 0xC0 == 0x80:
+                    MEM[a] &= ~(1 << bitn) & 0xFF
+                elif o3 & 0xC0 == 0xC0:
+                    MEM[a] |= 1 << bitn
+                else:
+                    raise SystemExit(f'DD CB {o3:02X} @{self.pc-4:04X}')
             elif o2 & 0xC7 == 0x86: self.alu((o2 >> 3) & 7, MEM[disp()])
             else: raise SystemExit(f'{op:02X} {o2:02X} @{self.pc-2:04X}')
             return
@@ -169,6 +192,18 @@ class Z80:
             elif o2 & 0xF8 == 0x10:                   # RL
                 v = self.getr(i); c = self.fc
                 self.fc = bool(v & 0x80); v = ((v << 1) | c) & 0xFF
+                self.setr(i, v); self.fz = v == 0
+            elif o2 & 0xF8 == 0x00:                   # RLC
+                v = self.getr(i); self.fc = bool(v & 0x80)
+                v = ((v << 1) | (v >> 7)) & 0xFF
+                self.setr(i, v); self.fz = v == 0
+            elif o2 & 0xF8 == 0x08:                   # RRC
+                v = self.getr(i); self.fc = bool(v & 1)
+                v = ((v >> 1) | (v << 7)) & 0xFF
+                self.setr(i, v); self.fz = v == 0
+            elif o2 & 0xF8 == 0x28:                   # SRA
+                v = self.getr(i); self.fc = bool(v & 1)
+                v = (v >> 1) | (v & 0x80)
                 self.setr(i, v); self.fz = v == 0
             else: raise SystemExit(f'CB {o2:02X}')
             return

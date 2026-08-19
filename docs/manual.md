@@ -45,6 +45,11 @@ You have a cable whip, a strong back, and one piece of evidence.
    once, or wait ten seconds and the game loads itself.
 4. At the title screen, press `SPACE` to begin the climb.
 
+Leave the title screen alone and every five seconds it turns into
+**KNOW YOUR SHAFT** — a page showing every object you will meet below,
+each with its picture — and five seconds later turns back. `SPACE`
+starts the game from either page.
+
 The game uses all 128K of your machine. The three lower banks hold the
 fifty-nine levels of the Shaft; they are pulled in as you climb, so there
 is no disc access once you are underway.
@@ -182,16 +187,26 @@ when it lands. Anyone caught in the crack goes down.
 
 The whip can also be aimed: hold `↑` as you crack for a strike straight
 overhead, or `↑` and a direction for a rising diagonal. Debris cannot be
-whipped out of the air.
+whipped out of the air — but a **drone** can, and the overhead and
+diagonal cracks are the only things that reach one.
 
 | | Who | Behaviour |
 |---|---|---|
 | **RIOT GUARD** | Company security, visored, shielded | Patrols his walkway. Slow — he moves one step in four. You can outrun him, and outrunning him is often cheaper than fighting |
 | **COAT MAN** | Long coat, dark glasses, crowbar | Patrols twice as fast as a guard. Duck his swing and answer with the whip |
 | **THROWER** | Perched above the walkway | Drops rubble on the deck below on a timer. He will not come down. Duck the rock, or cross when his arms are empty |
+| **SECURITY DRONE** | A rotored charge with one red eye | From level 20. Appears without warning, homes on you, and **detonates on contact** — one energy point. Walk away from it, or bring it down with the overhead or diagonal whip. The side crack passes under it |
 
-Any contact with a person, or with falling debris, costs one energy
-point.
+**From level 10, the riot guards start shooting.** At first only one
+gun per level; one more every few levels, until every guard on every
+walkway carries one. A guard fires only along his own walkway, only in
+the direction he is marching, and never point-blank — and the round
+flies at **gun height**. **Duck and it passes clean over your head**;
+a well-timed jump clears it too. Bullets die on walls — and on a
+hanging duct, which will happily eat a round meant for you.
+
+Any contact with a person, a bullet, a detonating drone or falling
+debris costs one energy point.
 
 ---
 
@@ -219,8 +234,10 @@ it will still be there when you do.
 
 ## ELEVATORS
 
-Levels **1, 10, 20, 30, 40 and 50** have an elevator door on the bottom
-floor. Stand at the door and press `↑` or `↓` to ride.
+Levels **1, 10, 20, 30, 40 and 50** have an elevator on the bottom
+floor: a full set of **double doors**, with the level number burning
+above them in **red seven-segment digits**, like the floor readout of
+any honest lift. Stand at the doors and press `↑` or `↓` to ride.
 
 The elevator will only take you to stops **you have already reached on
 foot**. It is a shortcut back through the Shaft, not a way to skip it.
@@ -236,7 +253,7 @@ Along the top of the screen:
 | Reading | Meaning |
 |---|---|
 | **Key icon + five digits** | Cards held, in colour order: green, cyan, yellow, white, red |
-| **Two digits** | The level you are on, 1 to 59 |
+| **LVL + two digits** | The level you are on, 1 to 59 |
 | **Four digits** | Your score |
 | **Bolt + digit** | Energy remaining, out of five |
 | **Heart + digit** | Lives remaining |
@@ -274,6 +291,11 @@ with an unlimited number of people to fall over.
   costs you nothing; one bad guess costs you an energy point.
 - **Learn the ducts.** A slide carries you further than a duck, and its
   momentum will take you off an edge if you are careless.
+- **The duck is your armour.** From level 10, every bullet in the Shaft
+  flies at gun height. A mechanic on his knees is a mechanic they
+  cannot shoot.
+- **See the rotors, raise the whip.** A drone ignored is an energy
+  point spent. The overhead crack costs nothing.
 - **When you are lost, go down.** Doors you opened are still open, cards
   you took are still gone, switches you threw are still thrown. The Shaft
   remembers everything you have done to it.

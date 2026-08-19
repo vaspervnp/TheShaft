@@ -70,7 +70,7 @@ INP_RIGHT       equ 1
 INP_UP          equ 2           ; climb
 INP_DOWN        equ 3           ; climb down / duck / slide
 INP_FIRE        equ 4           ; jump (Space / joystick fire 1)
-INP_ACT         equ 5           ; lasso (Z / joystick fire 2)
+INP_ACT         equ 5           ; whip (Z / joystick fire 2)
 
 ; Player sprite metrics (Mode 0: 1 byte = 2 pixels)
 SPR_W_BYTES     equ 4           ; 8 pixels wide
@@ -132,6 +132,11 @@ ET_PROJ         equ 4           ; the falling debris itself
 ET_DYING        equ 5           ; being erased from both buffers
 ET_DRIP         equ 6           ; falling lubricant (colour in +9)
 ET_STEAM        equ 7           ; a vent's blast: a standing column
+ET_BULLET       equ 8           ; a rifle round at gun height
+ET_DRONE        equ 9           ; kamikaze flyer, homing on the player
+BULLET_LVL      equ 10          ; guards start shooting at this level
+DRONE_LVL       equ 20          ; ...and the drone dispatch wakes here
+RIOT_RELOAD     equ 140         ; frames between a guard's shots
 START_LIVES     equ 3
 MAX_VENTS       equ 4           ; steam vents per level
 STEAM_TIME      equ 45          ; frames a blast stays up
@@ -143,9 +148,9 @@ ENERGY_MAX      equ 5
 IMMUNE_TIME     equ 150         ; 3 seconds at 50 frames/s
 MAX_LEAKS       equ 4           ; dripping ceiling pipes per level
 
-; The lasso: whip length in bytes, active/cooldown timing
-LASSO_LEN       equ 8           ; 16 pixels of rope
-LASSO_TIME      equ 10          ; timer start; rope visible while >= 5
+; The whip: reach in bytes, active/cooldown timing
+WHIP_LEN       equ 8           ; 16 pixels of rope
+WHIP_TIME      equ 10          ; timer start; rope visible while >= 5
 SLIDE_TIME      equ 12          ; frames of slide burst at 2 bytes/frame
 
 ; Fall damage: platforms sit 48 lines apart and a jump-down adds at
@@ -160,6 +165,10 @@ SFX_HIT         equ 2
 SFX_PING        equ 3
 SFX_WHIP        equ 4
 SFX_KILL        equ 5
+SFX_STEP        equ 6
+SFX_RUNG        equ 7
+
+STEP_FRAMES     equ 5           ; a footfall every 5 frames of walking
 
         org #1000
 
@@ -232,6 +241,7 @@ game_loop:
         call sfx_update         ; feed the AY (one write burst per frame)
         call update_music       ; the shaft's dirge, channels B+C
         call update_player      ; walk/climb/jump/fall state machine
+        call step_tick          ; his boots on the deck, every 5 frames
         ld a,(player_y)
         cp 8                    ; crossed the top edge of the screen?
         jp c,next_level         ; up one level of the shaft
@@ -263,17 +273,19 @@ gl_no_fdesc:
         call nz,take_fall_hit
         call check_elevator     ; standing at a lift door + Up/Down?
         call update_entities    ; patrols, throwers, falling debris
-        ld a,(lasso_timer)      ; the thong out at full stretch? resolve
-        cp LASSO_TIME-4         ; the crack against the just-moved foes
-        call z,lasso_hits
+        ld a,(whip_timer)      ; the thong out at full stretch? resolve
+        cp WHIP_TIME-4         ; the crack against the just-moved foes
+        call z,whip_hits
         call update_leaks       ; ceiling pipes shed their drops
         call update_vents       ; steam nozzles on the 300 Hz clock
+        call update_drones      ; the kamikaze dispatch, level 20 up
         call check_enemy_hit    ; player box vs every hostile box
         call c,take_hit         ; costs energy, not (immediately) life
         call check_keycards     ; touching a keycard tile? collect it
         call check_doors        ; pushing a door with a card? open it
         call render_entities    ; restore tiles, draw everyone + rope
         call draw_hud           ; keycards (left) and lives (right)
+        call draw_lift_panel    ; the LED floor readout over the lift
         ld hl,frame_ctr
         inc (hl)
         jr game_loop
@@ -421,7 +433,7 @@ ri_fire:
         set INP_FIRE,c
 ri_no_fire:
 
-        ; ---- ACT (lasso) : joystick fire 2, or Z (line 8, bit 7)
+        ; ---- ACT (whip) : joystick fire 2, or Z (line 8, bit 7)
         ld a,(key_matrix+8)
         cpl
         rlca                    ; Z -> carry
@@ -511,7 +523,7 @@ sk_row:
 ; player is never inside a wall, so nothing needs pushing back out.
 ; ======================================================================
 update_player:
-        ld hl,lasso_timer       ; the whip recoils whatever we're doing
+        ld hl,whip_timer       ; the whip recoils whatever we're doing
         ld a,(hl)
         or a
         jr z,up_lt
@@ -553,14 +565,14 @@ upd_ground:
         call start_jump         ; airborne with full upward velocity...
         jp move_horizontal      ; ...and may steer this same frame
 ug_no_jump:
-        ld a,(input_new)        ; Act = crack the lasso (press edge,
+        ld a,(input_new)        ; Act = crack the whip (press edge,
         bit INP_ACT,a           ; only once the rope has recoiled)
-        jr z,ug_no_lasso
-        ld a,(lasso_timer)
+        jr z,ug_no_whip
+        ld a,(whip_timer)
         or a
-        jr nz,ug_no_lasso
-        ld a,LASSO_TIME
-        ld (lasso_timer),a      ; game_loop resolves the hits this frame
+        jr nz,ug_no_whip
+        ld a,WHIP_TIME
+        ld (whip_timer),a      ; game_loop resolves the hits this frame
         ; aim from the held cursor: Up = skyward, Up+side = diagonal,
         ; neither = the classic side whip
         ld a,(input_held)
@@ -573,11 +585,11 @@ ug_no_jump:
         jr z,ug_aim
         ld a,2
 ug_aim:
-        ld (lasso_dir),a
+        ld (whip_dir),a
         ld a,SFX_WHIP
         call sfx_start
         ret                     ; planting the throw costs the frame
-ug_no_lasso:
+ug_no_whip:
         ld a,(input_held)       ; Up: try to mount a ladder
         bit INP_UP,a
         jr z,ug_no_up
@@ -1728,6 +1740,7 @@ ll_slot:
         ld (ix+6),c             ; xmax
         ld (ix+7),0             ; animation ticker
         ld (ix+8),0
+        ld (ix+9),0             ; (a stale rifle must not carry over)
         push af
         ld a,(ix+0)             ; throwers start their wind-up at the
         cp ET_THROW             ; phase, so barrages don't synchronise
@@ -1744,6 +1757,9 @@ ll_next:
         ld de,ENT_SIZE
         add ix,de
         djnz ll_slot
+        push hl
+        call arm_riots          ; rifles from level 10; drone clock
+        pop hl
         ; --- and after the enemies: the leaky ceiling pipes
         ld a,(hl)
         inc hl
@@ -2253,15 +2269,15 @@ el_dslot:
         add ix,de
         djnz el_dslot
         xor a                   ; fresh combat state
-        ld (lasso_timer),a
+        ld (whip_timer),a
         ld (slide_timer),a
         ld (slide_lock),a
         ld (player_duck),a
         ld (fall_hit),a
         ld (immune_timer),a
-        ld hl,lasso_prev        ; no stale rope to restore
+        ld hl,whip_prev        ; no stale rope to restore
         ld (hl),a
-        ld (lasso_prev+5),a
+        ld (whip_prev+5),a
         ; paint the room into BOTH buffers (the visible top-to-bottom
         ; sweep is our flip-screen transition effect)
         ld a,SCREEN_B/256
@@ -2506,8 +2522,8 @@ check_elevator:
         ld b,a
         ld a,(player_x)
         sub b
-        inc a
-        cp 3                    ; ...right at the door (+/- 1 byte)
+        add a,2                 ; ...at the double doors: any overlap
+        cp 9                    ; of his body with their 8-byte span
         ret nc
         ld a,(input_new)
         bit INP_UP,a
@@ -2545,7 +2561,8 @@ elev_go:
         call sfx_start
         ld a,(current_level)
         call load_level
-        ld a,(elevator_col)     ; step out of the destination's door
+        ld a,(elevator_col)     ; step out centred between the
+        add a,2                 ; destination's double doors
         ld (player_x),a
         ld a,176
         ld (entry_y),a
@@ -2561,6 +2578,67 @@ ei_loop:
         inc hl
         inc c
         jr ei_loop
+
+; ----------------------------------------------------------------------
+; draw_lift_panel -- the floor readout over the lift doors: the level
+; number as two seven-segment digits, red like an LED.  Redrawn every
+; frame after the sprites, so nothing walking past can wipe it.
+; ----------------------------------------------------------------------
+draw_lift_panel:
+        ld a,(elevator_col)
+        inc a
+        ret z                   ; no lift on this level
+        ld a,(current_level)    ; split into tens and ones ("01" style:
+        ld d,0                  ; a real panel keeps its leading zero)
+dlp_tens:
+        cp 10
+        jr c,dlp_have
+        sub 10
+        inc d
+        jr dlp_tens
+dlp_have:
+        ld e,a
+        ld a,(elevator_col)
+        ld b,a
+        push de
+        ld a,d
+        call dlp_digit          ; tens at the doors' left edge
+        pop de
+        ld a,(elevator_col)
+        add a,4
+        ld b,a
+        ld a,e                  ; ones four bytes along
+; dlp_digit -- seven-segment digit A at byte column B, over the door
+dlp_digit:
+        ld hl,seg_font
+        add a,l
+        ld l,a
+        jr nc,$+3
+        inc h
+        ld a,(hl)               ; gfedcba segment mask
+        ld ix,seg_geom
+        ld c,7
+dlp_seg:
+        rra                     ; next segment bit into carry
+        jr nc,dlp_next
+        push af
+        push bc
+        ld a,(ix+0)             ; dx from the digit's column
+        add a,b
+        ld b,a
+        ld c,(ix+1)             ; scanline
+        ld d,(ix+2)             ; width in bytes
+        ld e,(ix+3)             ; height in lines
+        ld a,#F0                ; both pixels pen 5: LED red
+        call fill_rect
+        pop bc
+        pop af
+dlp_next:
+        ld de,4
+        add ix,de
+        dec c
+        jr nz,dlp_seg
+        ret
 
 elev_visited:                   ; carry set if stop index C is visited
         ld b,c                  ; A = 1 << C
@@ -2656,7 +2734,7 @@ go_loop:
 ;   PROJ  the falling debris: constant 3 lines/frame until it meets
 ;         something solid (or the floor) and shatters
 ;   DYING a two-frame ghost whose old images get erased from both
-;         buffers before the slot frees up (lasso kills, debris hits)
+;         buffers before the slot frees up (whip kills, debris hits)
 ;
 ; ======================================================================
 update_entities:
@@ -2673,18 +2751,31 @@ ue_loop:
         cp ET_COAT
         jr z,ue_coat
         cp ET_THROW
-        jr z,ue_thrower
+        jp z,ue_thrower
         cp ET_PROJ
         jp z,ue_proj
         cp ET_DRIP
         jp z,ue_drip
         cp ET_STEAM
         jp z,ue_steam
+        cp ET_BULLET
+        jp z,ue_bullet
+        cp ET_DRONE
+        jp z,ue_drone
         dec (ix+8)              ; ET_DYING: fade out, free the slot
         jp nz,ue_next
         ld (ix+0),ET_NONE
         jp ue_next
 ue_riot:
+        ld a,(ix+9)             ; armed?  (from level 10 load_level
+        or a                    ; arms the first few, later all)
+        jr z,ue_riot_walk
+        dec (ix+8)              ; his reload clock runs every frame
+        jr nz,ue_riot_walk
+        ld a,RIOT_RELOAD
+        ld (ix+8),a
+        call riot_fire
+ue_riot_walk:
         ld a,(ix+7)             ; riot gear is heavy: one step in four
         and 3                   ; frames (a quarter of walking pace)
         jp nz,ue_next
@@ -2718,7 +2809,7 @@ ue_turn_l:
         jp ue_next
 ue_thrower:
         dec (ix+8)              ; wind-up timer
-        jr nz,ue_next
+        jp nz,ue_next
         ld a,(ix+4)             ; rewind for the next throw
         ld (ix+8),a
         ld a,(player_x)         ; only throws when someone is below
@@ -2727,9 +2818,9 @@ ue_thrower:
         neg
 ue_th_dx:
         cp 28
-        jr nc,ue_next
+        jp nc,ue_next
         call spawn_projectile
-        jr ue_next
+        jp ue_next
 ue_proj:
         ld a,(ix+2)
         add a,3                 ; falling debris: 3 lines/frame
@@ -2744,7 +2835,7 @@ ue_proj:
         call probe_level        ; (trashes IX)
         pop ix
         rra
-        jr nc,ue_next
+        jp nc,ue_next
 ue_proj_die:
         ld (ix+0),ET_DYING
         ld (ix+8),2
@@ -2770,6 +2861,99 @@ ue_drip:
         pop ix
         rra
         jr c,ue_proj_die
+        jp ue_next
+ue_bullet:
+        ld a,(ix+1)
+        add a,(ix+3)            ; fly on
+        ld (ix+1),a
+        cp 1
+        jr c,ub_die             ; the outer walls always stop it
+        cp SCR_W_BYTES-2
+        jr nc,ub_die
+        push ix                 ; ...and so does any slab or crate
+        ld b,a
+        ld c,(ix+2)
+        ld d,2
+        ld e,3
+        call probe_level
+        pop ix
+        rra
+        jr c,ub_die
+        ld a,(player_x)         ; the man himself: a 2-byte slug
+        ld c,a                  ; against his 4-byte body
+        ld a,(ix+1)
+        inc a
+        sub c
+        cp 5
+        jp nc,ue_next
+        ld a,(player_y)
+        ld d,a
+        add a,SPR_H_LINES
+        ld e,a
+        ld a,(player_duck)
+        or a
+        jr z,ub_head
+        ld a,d
+        add a,8                 ; THE dodge: a duck empties the air
+        ld d,a                  ; at gun height
+ub_head:
+        ld a,(ix+2)
+        cp e
+        jp nc,ue_next           ; under his feet
+        add a,2                 ; the slug's last line
+        cp d
+        jp c,ue_next            ; over the (ducked) head -- or a jump
+        call take_hit           ; immunity-aware; may end the game
+ub_die:
+        ld (ix+0),ET_DYING
+        ld (ix+8),2
+        jp ue_next
+ue_drone:
+        ld a,(ix+7)             ; sideways drift every other frame:
+        and 1                   ; a walking man can outrun it
+        jr nz,ud_fall
+        ld a,(player_x)
+        cp (ix+1)
+        jr z,ud_fall
+        jr c,ud_left
+        inc (ix+1)
+        jr ud_fall
+ud_left:
+        dec (ix+1)
+ud_fall:
+        ld a,(player_y)
+        add a,4                 ; it dives for the chest
+        cp (ix+2)
+        jr z,ud_prox
+        jr c,ud_up
+        inc (ix+2)
+        jr ud_prox
+ud_up:
+        dec (ix+2)
+ud_prox:
+        ld a,(player_x)         ; touching him?  then it detonates
+        sub (ix+1)
+        jr nc,ud_dx
+        neg
+ud_dx:
+        cp SPR_W_BYTES
+        jp nc,ue_next
+        ld a,(player_y)
+        ld d,a
+        add a,SPR_H_LINES-1
+        ld e,a
+        ld a,(ix+2)             ; its 8-line shell against his body
+        cp e
+        jr c,ud_top
+        jp nz,ue_next           ; entirely below him
+ud_top:
+        add a,7
+        cp d
+        jp c,ue_next            ; entirely above him
+        ld (ix+0),ET_DYING      ; it goes off whether or not the
+        ld (ix+8),2             ; flicker shields him
+        call take_hit
+        jp ue_next
 ue_next:
         pop bc
         ld de,ENT_SIZE
@@ -2925,6 +3109,177 @@ sp_found:
         ret
 
 ; ----------------------------------------------------------------------
+; riot_fire -- the armed guard at IX levels his rifle.  He only pulls
+; the trigger with the player at his own walkway height, on the side
+; he is facing, and far enough out that the shot is honest -- then the
+; round leaves at gun height, where a duck (or a jump) clears it.
+; ----------------------------------------------------------------------
+riot_fire:
+        ld a,(player_y)
+        sub (ix+2)
+        add a,4                 ; |py - gy| <= 4: his walkway
+        cp 9
+        ret nc
+        ld a,(player_x)
+        sub (ix+1)
+        ret z
+        jr c,rf_left
+        bit 7,(ix+3)            ; target to the right: only when
+        ret nz                  ; marching right
+        cp 6
+        ret c                   ; point-blank is the shield's job
+        ld c,1
+        jr rf_shoot
+rf_left:
+        bit 7,(ix+3)
+        ret z
+        neg
+        cp 6
+        ret c
+        ld c,#FF
+rf_shoot:
+        ld iy,entities          ; a slot from the shared pool
+        ld b,MAX_ENTITIES
+rf_slot:
+        ld a,(iy+0)
+        or a
+        jr z,rf_found
+        ld de,ENT_SIZE
+        add iy,de
+        djnz rf_slot
+        ret                     ; pool full: the shot stays chambered
+rf_found:
+        ld (iy+0),ET_BULLET
+        ld (iy+3),c
+        ld a,(ix+1)
+        add a,c
+        add a,c                 ; the muzzle, clear of his own body
+        ld (iy+1),a
+        ld a,(ix+2)
+        add a,5                 ; gun height: a ducked head is under it
+        ld (iy+2),a
+        ld (iy+7),0
+        ret
+
+; ----------------------------------------------------------------------
+; update_drones -- from DRONE_LVL up, the shaft dispatches kamikaze
+; drones on its own clock.  Every expiry of drone_timer only SOMETIMES
+; launches; the odds and the ceiling both climb with the level, from
+; one rare visitor at 20 to three aloft near the top.
+; ----------------------------------------------------------------------
+update_drones:
+        ld a,(current_level)
+        cp DRONE_LVL
+        ret c
+        ld hl,drone_timer
+        dec (hl)
+        ret nz
+        call rnd8               ; rewind: 60..187 frames to next try
+        and #7F
+        add a,60
+        ld (hl),a
+        ld a,(current_level)    ; launch odds: (level-16)*4 in 256 --
+        sub 16                  ; 6% at 20, 37% at 40, 67% at 59
+        add a,a
+        add a,a
+        ld c,a
+        call rnd8
+        cp c
+        ret nc                  ; not this time
+        ld a,(current_level)    ; the ceiling: 1 aloft at 20, 2 from
+        sub DRONE_LVL           ; 36, 3 from 52
+        srl a
+        srl a
+        srl a
+        srl a
+        inc a
+        ld c,a
+        ld l,0                  ; count those already flying
+        ld ix,entities
+        ld b,MAX_ENTITIES
+        ld de,ENT_SIZE
+ud_cnt:
+        ld a,(ix+0)
+        cp ET_DRONE
+        jr nz,ud_cn
+        inc l
+ud_cn:
+        add ix,de
+        djnz ud_cnt
+        ld a,l
+        cp c
+        ret nc                  ; the sky is full
+spawn_drone:                    ; (falls through when it is not)
+        ld iy,entities
+        ld b,MAX_ENTITIES
+sd_loop:
+        ld a,(iy+0)
+        or a
+        jr z,sd_found
+        add iy,de               ; DE still holds ENT_SIZE
+        djnz sd_loop
+        ret                     ; pool busy with rocks and drips
+sd_found:
+        ld (iy+0),ET_DRONE
+        call rnd8
+        and 63
+        add a,8                 ; anywhere along the open top strip
+        ld (iy+1),a
+        ld (iy+2),8             ; just under the ceiling
+        ld (iy+7),0
+        ret
+
+; rnd8 -- 8-bit Galois LFSR (poly #1D), period 255.  Seeded per level
+; from the 300 Hz clock, so no two runs share a sky.  Trashes only A.
+rnd8:
+        ld a,(rnd_state)
+        add a,a
+        jr nc,rn_store
+        xor #1D
+rn_store:
+        ld (rnd_state),a
+        ret
+
+; ----------------------------------------------------------------------
+; arm_riots -- called as a level is entered: from BULLET_LVL the first
+; riot guard carries a rifle, one more every 8 levels, until all of
+; them do.  Also winds the drone dispatcher's clock and seeds its dice.
+; ----------------------------------------------------------------------
+arm_riots:
+        ld a,(frame_ticks)      ; human timing at the keys makes every
+        or 1                    ; run's sky its own
+        ld (rnd_state),a
+        ld a,100
+        ld (drone_timer),a
+        ld a,(current_level)
+        sub BULLET_LVL
+        ret c                   ; below 10: nobody shoots
+        srl a
+        srl a
+        srl a
+        inc a
+        ld c,a                  ; C = rifles to hand out
+        ld b,MAX_ENTITIES
+        ld ix,entities
+        ld de,ENT_SIZE
+        ld l,30                 ; stagger the opening volleys
+ar_loop:
+        ld a,(ix+0)
+        cp ET_RIOT
+        jr nz,ar_next
+        ld (ix+9),1
+        ld (ix+8),l
+        ld a,l
+        add a,40
+        ld l,a
+        dec c
+        ret z                   ; every rifle handed out
+ar_next:
+        add ix,de
+        djnz ar_loop
+        ret
+
+; ----------------------------------------------------------------------
 ; check_enemy_hit -- the player's (duck-aware) box vs every hostile.
 ; Ducking/sliding empties the TOP half of the player box, so debris
 ; and swings at head height pass clean over.  Carry set = contact.
@@ -2954,7 +3309,9 @@ ceh_loop:
         jr z,ceh_next
         cp ET_DYING
         jr z,ceh_next           ; the defeated can't hurt you
-        cp ET_DRIP
+        cp ET_BULLET
+        jr nc,ceh_next          ; bullets and drones judge their own
+        cp ET_DRIP              ; contact, duck- and immunity-aware
         jr nz,ceh_solid
         ld a,(ix+9)
         or a
@@ -2996,17 +3353,17 @@ ceh_next:
         ret
 
 ; ----------------------------------------------------------------------
-; THE LASSO -- a mechanic's cable whip.  lasso_span works out how much
-; rope fits between the shoulder and the wall; lasso_hits snares any
-; PERSON whose body crosses the rope line (debris can't be lassoed).
+; THE WHIP -- the mechanic's cable whip.  whip_box works out how much
+; rope fits between the shoulder and the wall; whip_hits snares any
+; PERSON whose body crosses the rope line (debris can't be snared).
 ; ----------------------------------------------------------------------
-; lasso_box -- the whip's reach as a box B=x C=y D=w E=h, from
-; lasso_dir and the facing.  Carry clear = jammed against an edge.
-;   horizontal: LASSO_LEN x 6 at arm height, from the shoulder
+; whip_box -- the whip's reach as a box B=x C=y D=w E=h, from
+; whip_dir and the facing.  Carry clear = jammed against an edge.
+;   horizontal: WHIP_LEN x 6 at arm height, from the shoulder
 ;   up:         2 x 16 straight above the head
 ;   diagonal:   6 x 14 rising forward at 45 degrees
-lasso_box:
-        ld a,(lasso_dir)
+whip_box:
+        ld a,(whip_dir)
         or a
         jr z,lb_horiz
         dec a
@@ -3080,7 +3437,7 @@ lb_horiz:
         jr lb_clamp
 lb_left:
         ld a,(player_x)
-        sub LASSO_LEN
+        sub WHIP_LEN
         jr nc,lb_lok
         xor a
 lb_lok:
@@ -3090,9 +3447,9 @@ lb_lok:
 lb_clamp:
         or a
         ret z
-        cp LASSO_LEN
+        cp WHIP_LEN
         jr c,lb_w
-        ld a,LASSO_LEN
+        ld a,WHIP_LEN
 lb_w:
         ld d,a
         ld a,(player_y)
@@ -3102,36 +3459,44 @@ lb_w:
         scf
         ret
 
-lasso_hits:
-        call lasso_box
+whip_hits:
+        call whip_box
         ret nc
         ld ix,entities
         ld a,MAX_ENTITIES
-        ld (lh_n),a
-lh_loop:
+        ld (wh_n),a
+wh_loop:
         ld a,(ix+0)
         or a
-        jr z,lh_next
+        jr z,wh_next
+        cp ET_DRONE
+        jr nz,wh_person
+        ld a,(whip_dir)         ; a flyer: only the overhead and
+        or a                    ; diagonal cracks reach that high
+        jr z,wh_next
+        jr wh_test
+wh_person:
         cp ET_PROJ
-        jr nc,lh_next           ; only people can be snared
+        jr nc,wh_next           ; otherwise only people can be snared
+wh_test:
         ld a,(ix+1)             ; X overlap with the box
         add a,SPR_W_BYTES-1
         cp b
-        jr c,lh_next
+        jr c,wh_next
         ld a,b
         add a,d
         dec a
         cp (ix+1)
-        jr c,lh_next
+        jr c,wh_next
         ld a,(ix+2)             ; Y overlap
         add a,SPR_H_LINES-1
         cp c
-        jr c,lh_next
+        jr c,wh_next
         ld a,c
         add a,e
         dec a
         cp (ix+2)
-        jr c,lh_next
+        jr c,wh_next
         ld (ix+0),ET_DYING      ; snared!
         ld (ix+8),2
         push bc
@@ -3142,14 +3507,14 @@ lh_loop:
         call sfx_start
         pop de
         pop bc
-lh_next:
+wh_next:
         repeat ENT_SIZE
         inc ix
         rend
-        ld a,(lh_n)
+        ld a,(wh_n)
         dec a
-        ld (lh_n),a
-        jr nz,lh_loop
+        ld (wh_n),a
+        jr nz,wh_loop
         ret
 
 
@@ -3157,13 +3522,13 @@ lh_next:
 ; render_entities -- the per-frame draw pass, double-buffer aware:
 ; restore the background under every OLD image in this buffer (player,
 ; entities, last frame's rope), then draw everything anew.  DYING
-; entities get the restore but no draw -- that is how a lassoed enemy
+; entities get the restore but no draw -- that is how a snared enemy
 ; or shattered debris vanishes cleanly from BOTH buffers.
 ; ----------------------------------------------------------------------
 render_entities:
         call erase_player
         ; --- the rope from two frames ago in this buffer, if any
-        ld hl,lasso_prev        ; 5-byte slots {act,x,y,w,h} per buffer
+        ld hl,whip_prev        ; 5-byte slots {act,x,y,w,h} per buffer
         ld a,(buf_index)
         ld c,a
         add a,a
@@ -3303,12 +3668,12 @@ re_ar_y:
         ld e,7                  ; bright yellow
         call draw_char_any
 re_no_arrow:
-        ld a,(lasso_timer)
-        cp LASSO_TIME-5
+        ld a,(whip_timer)
+        cp WHIP_TIME-5
         ret c                   ; recoiled: nothing to draw
-        call lasso_box          ; B,C,D,E = this direction's reach
+        call whip_box          ; B,C,D,E = this direction's reach
         ret nc
-        ld a,(lasso_dir)        ; the side crack swings a whole arc, so
+        ld a,(whip_dir)        ; the side crack swings a whole arc, so
         or a                    ; its restore box is the arc's envelope
         jr nz,wb_keep           ; (restore_area clips to the map)
         ld a,(player_x)
@@ -3326,7 +3691,7 @@ wb_y:
         ld d,22
         ld e,22
 wb_keep:
-        ld hl,lasso_prev        ; remember the whole box for restore
+        ld hl,whip_prev        ; remember the whole box for restore
         ld a,(buf_index)
         push bc
         ld c,a
@@ -3349,7 +3714,7 @@ wb_keep:
         ld (hl),d
         inc hl
         ld (hl),e
-        ld a,(lasso_dir)
+        ld a,(whip_dir)
         or a
         jp z,whip_arc           ; the side crack: an arc, not a line
         dec a
@@ -3416,9 +3781,9 @@ rope_up:
 ; thong is actually drawn.
 ; ----------------------------------------------------------------------
 whip_arc:
-        ld a,(lasso_timer)
+        ld a,(whip_timer)
         ld b,a
-        ld a,LASSO_TIME
+        ld a,WHIP_TIME
         sub b                   ; A = phase 0..5, 0 = still coiled
         ld hl,whip_tab
         or a
@@ -3480,6 +3845,10 @@ entity_sprite:
         cp ET_COAT
         jr z,es_coat
         jr c,es_riot            ; ET_RIOT
+        cp ET_BULLET
+        jr z,es_bullet
+        cp ET_DRONE
+        jr z,es_drone
         cp ET_PROJ
         jr z,es_rock
         cp ET_DRIP
@@ -3496,6 +3865,16 @@ entity_sprite:
         ret
 es_rock:
         ld de,spr_rock
+        ret
+es_bullet:
+        ld de,spr_bullet
+        ret
+es_drone:
+        ld de,spr_drone_a
+        ld a,(ix+7)
+        and 2                   ; the rotors are a blur
+        ret z
+        ld de,spr_drone_b
         ret
 es_drip:
         ld de,spr_drip_red
@@ -4187,7 +4566,12 @@ draw_hud:
         ld c,0
         ld e,5                  ; red
         call draw_char
-        ; the level number, top centre, in decimal
+        ; the level number, top centre: "LVL 12"
+        ld hl,txt_lvl
+        ld b,24
+        ld c,0
+        ld e,2                  ; the label in steel...
+        call draw_text_narrow
         ld a,(current_level)
         ld c,0
 hud_tens:
@@ -4204,18 +4588,18 @@ hud_tdone:
         jr z,hud_tblank
         ld a,c
 hud_tblank:
-        ld b,28
-        ld c,0
-        ld e,1                  ; white
+        ld b,33                 ; ...the number in white, tucked in
+        ld c,0                  ; narrow so the score keeps its berth
+        ld e,1
         call draw_char
         pop af
-        ld b,32
+        ld b,36
         ld c,0
         ld e,1
         call draw_char
-        ; the score: four white digits, always shown
+        ; the score: four white digits, a breath after the level
         ld hl,score
-        ld b,40
+        ld b,42
 hud_sc:
         ld a,(hl)               ; a digit IS its glyph
         push hl
@@ -4229,7 +4613,7 @@ hud_sc:
         ld a,b
         add a,4
         ld b,a
-        cp 56
+        cp 58
         jr c,hud_sc
         ld a,GLYPH_BOLT         ; energy...
         ld b,60
@@ -4264,17 +4648,16 @@ menu_screen:
         xor a
         ld (sfx_timer),a
         call sfx_silence
-        call music_restart
+        call music_menu
         ld a,1                  ; music on for the title screen
         ld (music_on),a
+        xor a                   ; the attract loop starts on the title
+        ld (attract_pg),a
+        ld a,250
+        ld (attract_t),a
         ld hl,menu_map          ; backdrop straight from main RAM
         ld (current_map),hl
-        ld a,SCREEN_B/256
-        ld (draw_page),a
-        call draw_menu_page
-        ld a,SCREEN_A/256
-        ld (draw_page),a
-        call draw_menu_page
+        call ms_pages
 ms_loop:
         call frame_sync
         call flip_buffers
@@ -4282,6 +4665,15 @@ ms_loop:
         call update_music
         ld hl,frame_ctr
         inc (hl)
+        ld hl,attract_t         ; five seconds a side: the title, then
+        dec (hl)                ; the exhibits, then the title again
+        jr nz,ms_steady
+        ld (hl),250
+        ld a,(attract_pg)
+        xor 1
+        ld (attract_pg),a
+        call ms_pages
+ms_steady:
         ld a,(frame_ctr)        ; blink the prompt every 16 frames
         and 16
         ld e,6                  ; orange on...
@@ -4290,9 +4682,9 @@ ms_loop:
 ms_blink:
         ld hl,txt_press
         ld b,0                  ; 20 chars fills the width exactly
-        ld c,120
+        ld c,120                ; (both pages keep this line clear)
         call draw_text
-        ld a,(input_new)
+        ld a,(input_new)        ; Space starts the game from EITHER page
         bit INP_FIRE,a
         jr z,ms_loop
         ; --- new game
@@ -4377,6 +4769,72 @@ draw_menu_page:                 ; backdrop + text + diorama, one buffer
         ld de,spr_riot_l
         jp draw_sprite_8x16
 
+ms_pages:                       ; paint the current side into BOTH
+        ld a,SCREEN_B/256       ; buffers, so the flip shows one page
+        ld (draw_page),a
+        call ms_page1
+        ld a,SCREEN_A/256
+        ld (draw_page),a
+ms_page1:
+        ld a,(attract_pg)
+        or a
+        jp z,draw_menu_page
+        ; falls through to the exhibits
+
+; ----------------------------------------------------------------------
+; draw_info_page -- the attract loop's other side: every object of the
+; shaft with its picture, one museum row each.  Tiles must sit on
+; character rows (draw_tile steps a flat +#800), so every exhibit y is
+; a multiple of 8; line 120 stays clear for the blinking prompt.
+; ----------------------------------------------------------------------
+draw_info_page:
+        call clear_page
+        ld hl,txt_know
+        ld b,10
+        ld c,0                  ; (text needs character rows, like tiles)
+        ld e,7                  ; bright yellow title
+        call draw_text
+        ld ix,info_tab
+        ld b,9                  ; nine tile exhibits...
+dip_loop:
+        push bc
+        ld b,2
+        ld c,(ix+1)
+        call screen_addr
+        ex de,hl
+        ld a,(ix+0)
+        call draw_tile          ; (trashes A,BC,DE,HL)
+        ld l,(ix+2)
+        ld h,(ix+3)
+        ld b,8
+        ld c,(ix+1)
+        ld e,1
+        push ix                 ; draw_char walks the font through IX
+        call draw_text_narrow
+        pop ix
+        ld de,4
+        add ix,de
+        pop bc
+        djnz dip_loop
+        ld b,2                  ; ...and two who move: the kamikaze
+        ld c,168                ; drone (whip it upward)...
+        ld de,spr_drone_a
+        call draw_sprite_8x16
+        ld hl,txt_i_drone
+        ld b,8
+        ld c,168
+        ld e,1
+        call draw_text_narrow
+        ld b,2                  ; ...and the guard who shoots
+        ld c,184
+        ld de,spr_riot_l
+        call draw_sprite_8x16
+        ld hl,txt_i_guard
+        ld b,8
+        ld c,184
+        ld e,1
+        jp draw_text_narrow
+
 ; ======================================================================
 ;
 ;   SOUND EFFECTS -- Prompt 8: driving the AY-3-8912
@@ -4401,8 +4859,12 @@ draw_menu_page:                 ; backdrop + text + diorama, one buffer
 ;   JUMP : square tone whose period shrinks each frame - rising chirp
 ;   HIT  : pure noise burst, volume ramping 12->0 - a metallic crunch
 ;   PING : short high tone, quick fade - the keycard chime
-;   WHIP : the lasso -- noise snap + plunging tone, cut hard
+;   WHIP : the crack -- noise snap + plunging tone, cut hard
 ;   KILL : a felled guard -- sinking bass tone over deep noise
+;   STEP : a footfall -- DC click at level 8, generators off
+;          (step_tick arms one every 5 walking frames, A idle only)
+;   RUNG : a hand catching a ladder rail -- a 20 ms metallic tick,
+;          same cadence, only while the climb actually moves
 ; ======================================================================
 psg_write:                      ; A = AY register, E = value
         di
@@ -4448,7 +4910,11 @@ sfx_update:                     ; call once per frame
         jr z,sfx_upd_ping
         dec a
         jp z,sfx_upd_whip
-        jp sfx_upd_kill
+        dec a
+        jp z,sfx_upd_kill
+        dec a
+        jp z,sfx_upd_step
+        jp sfx_upd_rung
 sfx_upd_ping:
         ; ---- PING: high steady tone (period 40 ~= 1.5kHz), fast fade
         xor a
@@ -4497,7 +4963,7 @@ sfx_upd_hit:
         ld a,8
         jp psg_write
 sfx_upd_whip:
-        ; ---- WHIP: the lasso crack -- a bright noise SNAP riding a
+        ; ---- WHIP: the crack itself -- a bright noise SNAP riding a
         ; tone that plunges 62..190 over 6 frames; volume opens at 15
         ; and is cut hard (15,13,11,9,7,5) -- it stings, then it's gone
         ld a,(sfx_timer)
@@ -4563,6 +5029,29 @@ sfx_upd_kill:
         ld e,a
         ld a,8
         jp psg_write
+sfx_upd_step:
+        ; ---- STEP: a footfall -- the demo disc's DC click at half
+        ; scale.  Both generators stay off; the level jumping to 8
+        ; for one frame and back IS the sound: a 20 ms tap each way
+        ld a,9                  ; claim: tone and noise both off
+        ld (mix_a),a
+        ld a,8
+        ld e,8
+        jp psg_write
+sfx_upd_rung:
+        ; ---- RUNG: a hand catching a ladder rail -- where the boot's
+        ; click is toneless, this is a 20 ms metallic tick
+        xor a
+        ld e,100                ; ~625 Hz: well under the ping's chime
+        call psg_write          ; R0 tone period low
+        ld a,1
+        ld e,0
+        call psg_write          ; R1 high
+        ld a,8                  ; claim: tone on A
+        ld (mix_a),a
+        ld a,8
+        ld e,8
+        jp psg_write
 sfx_silence:
         ld a,8
         ld e,0
@@ -4571,25 +5060,77 @@ sfx_silence:
         ld (mix_a),a
         ret
 
+; ----------------------------------------------------------------------
+; step_tick -- while he walks (or slides) a deck, arm a footfall every
+; STEP_FRAMES frames; on a ladder, a rung tick at the same cadence.
+; Ladder motion never sets player_moved, so the climb is read off
+; player_y actually changing -- a refused climb_step stays silent.
+; Lowest-priority sound: it fires only when channel A is idle, so a
+; chirp or a crack is never clipped.  Otherwise the cadence re-arms.
+; ----------------------------------------------------------------------
+step_tick:
+        ld a,(player_state)
+        or a                    ; ST_GROUND = 0
+        jr z,st_wk
+        cp ST_CLIMB
+        jr z,st_lad
+st_rest:
+        ld a,STEP_FRAMES
+        ld (step_timer),a
+        ret
+st_wk:
+        ld a,(player_moved)
+        or a
+        jr z,st_rest
+        ld c,SFX_STEP
+        jr st_beat
+st_lad:
+        ld hl,climb_py
+        ld a,(player_y)
+        cp (hl)
+        ld (hl),a
+        jr z,st_rest            ; hands resting on the rails
+        ld c,SFX_RUNG
+st_beat:
+        ld hl,step_timer
+        dec (hl)
+        ret nz
+        ld (hl),STEP_FRAMES
+        ld a,(sfx_timer)        ; something real is ringing: skip the
+        or a                    ; beat, keep the cadence
+        ret nz
+        ld a,c
+        jp sfx_start
+
 sfx_len_tab:
-        defb 12,24,8,6,16       ; frames: JUMP, HIT, PING, WHIP, KILL
+        defb 12,24,8,6,16,2,2   ; frames: JUMP HIT PING WHIP KILL STEP RUNG
 
 ; ======================================================================
 ;
-;   AY MUSIC -- a two-voice industrial drone on channels B and C,
-;   leaving channel A to the sound effects.  One (note,duration)
-;   stream per voice, #FF loops it; notes index note_table (1-based,
-;   0 = rest).  The two loops have different lengths on purpose: they
-;   drift against each other, so the dirge never quite repeats.
+;   AY MUSIC -- two voices on channels B and C, leaving channel A to
+;   the sound effects.  One (note,duration) stream per voice, #FF
+;   loops it; notes index note_table (1-based, 0 = rest).  Two tunes:
+;   the TITLE THEME, whose voices are the same length so the piece
+;   repeats exactly every 15 seconds, and the ending's DIRGE, whose
+;   two loops have different lengths on purpose -- they drift against
+;   each other, so it never quite repeats.
 ;   The mixer register is written HERE, once a frame, combining the
 ;   music's tone bits with whatever channel A currently claims
 ;   (mix_a) -- bit 6 stays 0, or the keyboard dies.
 ;
 ; ======================================================================
-music_restart:
+music_menu:                     ; the title screen's 15-second theme
+        ld hl,menu_tb
+        ld de,menu_tc
+        jr mr_set
+music_restart:                  ; the ending's drifting dirge
         ld hl,tune_b
+        ld de,tune_c
+mr_set:
+        ld (mus_b_tune),hl
         ld (mus_b_state),hl
-        ld hl,tune_c
+        ld (mus_c_tune),de
+        ex de,hl
         ld (mus_c_state),hl
         ld a,1
         ld (mus_b_state+2),a
@@ -4607,11 +5148,11 @@ update_music:
         jp psg_write
 um_play:
         ld ix,mus_b_state
-        ld de,tune_b
+        ld de,(mus_b_tune)
         ld c,2                  ; R2/R3 tone B, R9 volume
         call mus_channel
         ld ix,mus_c_state
-        ld de,tune_c
+        ld de,(mus_c_tune)
         ld c,4                  ; R4/R5 tone C, R10 volume
         call mus_channel
         ld a,(mix_a)            ; the one true mixer write
@@ -4643,7 +5184,8 @@ mc_note:
         jr nz,mc_play
         push bc                 ; a rest: just close the volume
         ld a,c
-        add a,7
+        srl a
+        add a,8                 ; tone R2/R3 -> vol R9, R4/R5 -> R10
         ld e,0
         call psg_write
         pop bc
@@ -4676,7 +5218,8 @@ mc_play:
         call psg_write          ; coarse period
         pop bc
         ld a,c
-        add a,7                 ; R9 or R10
+        srl a
+        add a,8                 ; tone R2/R3 -> vol R9, R4/R5 -> R10
         ld e,6                  ; melody murmurs...
         cp 10
         jr nz,mc_vol
@@ -4684,17 +5227,8 @@ mc_play:
 mc_vol:
         jp psg_write
 
-note_table:                     ; AY periods (1 MHz/16/f), C2 up
-        defw 956,902,851,803,758,716,676,638,602,568,536,506
-        defw 478,451,426,402,379,358,338,319,301,284,268,253,239
-tune_b:                         ; the melody: sparse, minor, watchful
-        defb 0,16, 13,8, 16,8, 18,8, 20,24, 18,8, 16,8, 13,24
-        defb 0,8, 16,8, 18,8, 20,8, 23,24, 20,8, 18,8, 16,24
-        defb #FF
-tune_c:                         ; the bass: the pumps, far below
-        defb 1,32, 4,32, 6,32, 8,16, 6,16
-        defb 1,32, 4,32, 9,32, 8,16, 4,16
-        defb #FF
+; (note_table and the tune streams live above the compiled sprites --
+; the sub-#4000 bank is crowded and data doesn't need to be here)
 
 ; ======================================================================
 ; set_palette -- program all 16 inks + border via the Gate Array
@@ -4737,6 +5271,12 @@ cb_one:
         ldir                    ; smear the first zero across 16K
         ret
 
+clear_page:                     ; blacken just the DRAW buffer
+        ld a,(draw_page)
+        ld h,a
+        ld l,0
+        jr cb_one
+
 ; ----------------------------------------------------------------------
 ; Interrupt stub -- copied to #0038 at init (IM 1 vector)
 ;
@@ -4767,25 +5307,8 @@ int_stub_end:
 ; ----------------------------------------------------------------------
 ; Menu / UI strings (ASCII; ascii_to_glyph maps them to the font)
 ; ----------------------------------------------------------------------
-txt_title:      defb "THE SHAFT",0
-txt_tag:        defb "THE TRUTH IS ABOVE",0
-txt_press:      defb "PRESS SPACE TO START",0
-txt_ctl1:       defb "CURSORS - MOVE AND CLIMB",0
-txt_ctl2:       defb "SPACE - JUMP   Z - LASSO",0
-txt_ctl3:       defb "DOWN - DUCK - SLIDE",0
-txt_credit:     defb "REVIVE8BIT - 2026",0
-txt_credit_menu: defb "REVIVE8BIT - 2026 - VASPER",0
-txt_end_t:      defb "THE AIRLOCK",0
-txt_end_1a:     defb "THE SEAL GRINDS OPEN",0
-txt_end_1b:     defb "COLD AIR RUSHES IN",0
-txt_end_2t:     defb "OUTSIDE",0
-txt_end_2a:     defb "GREEN HILLS TO THE",0
-txt_end_2b:     defb "HORIZON  CLEAN AIR",0
-txt_end_2c:     defb "THE POISON WAS A LIE",0
-txt_end_2d:     defb "THE SHAFT WAS A CAGE",0
-txt_end_3t:     defb "THE END",0
-txt_end_3b:     defb "PRESS FIRE",0
-txt_score:      defb "SCORE 0000",0
+; (the txt_* strings live above the compiled sprites with the music
+; data -- the sub-#4000 bank is for code, not prose)
 bt_ptr:         defw 0
 
 ; ----------------------------------------------------------------------
@@ -4796,23 +5319,8 @@ bt_ptr:         defw 0
 ; ----------------------------------------------------------------------
         include "levels.asm"
 
-; ----------------------------------------------------------------------
-; line_offsets -- offset of each scanline's first byte within a 16K
-; screen, generated at assembly time:
-;     offset(y) = (y AND 7)*#800 + (y/8)*80
-; Built with nested repeats (25 character rows of 8 scanlines) rather
-; than division, because rasm evaluates "/" in floating point.
-; ----------------------------------------------------------------------
-line_offsets:
-lrow=0
-        repeat 25               ; 25 character rows down the screen...
-lline=0
-        repeat 8                ; ...of 8 interleaved scanlines each
-        defw lline*#800+lrow*80
-lline=lline+1
-        rend
-lrow=lrow+1
-        rend
+; (line_offsets lives above the compiled sprites with the other
+; read-only tables -- 400 bytes the code bank cannot spare)
 
 ; ----------------------------------------------------------------------
 ; Variables
@@ -4851,13 +5359,21 @@ current_level:  defb 1
 respawn_x:      defb 38         ; where this level was entered
 sfx_type:       defb 0          ; active sound effect (0 = none)
 sfx_timer:      defb 0          ; frames left on it
+step_timer:     defb STEP_FRAMES ; frames to the next footfall/rung
+climb_py:       defb 0          ; player_y last frame, for ladder motion
+drone_timer:    defb 100        ; frames to the dispatcher's next try
+rnd_state:      defb #5A        ; the LFSR's shift register (never 0)
+attract_pg:     defb 0          ; menu side showing: 0 title, 1 exhibits
+attract_t:      defb 250        ; frames until the page turns (5 s)
 mix_a:          defb 9          ; channel A's mixer claim (tone/noise)
-music_on:       defb 0          ; the dirge plays in menu/ending only
+music_on:       defb 0          ; theme on the menu, dirge on the ending
 mus_b_state:    defs 3,0        ; melody: stream ptr + frames left
 mus_c_state:    defs 3,0        ; bass
+mus_b_tune:     defw 0          ; loop base per voice (theme or dirge)
+mus_c_tune:     defw 0
 mus_period:     defw 0
 
-player_facing:  defb 0          ; 0 = right, 1 = left (lasso, slide)
+player_facing:  defb 0          ; 0 = right, 1 = left (whip, slide)
 player_duck:    defb 0          ; low profile this frame (duck/slide)
 player_moved:   defb 0          ; walked/slid this frame (walk anim)
 fall_hit:       defb 0          ; landed hard: the loop collects a life
@@ -4876,10 +5392,10 @@ switch_count:   defb 0          ; switches on the current level
 switch_tab:     defs 8*3,0      ; per switch: id, map col, map row
 slide_timer:    defb 0          ; frames of slide burst left
 slide_lock:     defb 0          ; one slide per Down press
-lasso_timer:    defb 0          ; whip out + recoil countdown
-lasso_dir:      defb 0          ; 0 side, 1 up, 2 diagonal
-lasso_prev:     defs 10,0       ; per buffer: {act,x,y,w,h} rope box
-lh_n:           defb 0          ; lasso_hits' loop counter
+whip_timer:    defb 0          ; whip out + recoil countdown
+whip_dir:      defb 0          ; 0 side, 1 up, 2 diagonal
+whip_prev:     defs 10,0       ; per buffer: {act,x,y,w,h} rope box
+wh_n:           defb 0          ; whip_hits' loop counter
 rp_x:           defb 0          ; diagonal rope walker
 rp_y:           defb 0
 rp_n:           defb 0
@@ -4926,3 +5442,132 @@ key_matrix:     defs 10,#FF     ; raw matrix rows (active low, #FF = idle)
 ; boot, and the loader fills the EXTRA-ram banks before RUNning us).
 ; ----------------------------------------------------------------------
         include "sprites_c.asm"
+
+; ----------------------------------------------------------------------
+; Music data -- read-only streams parked above the compiled sprites,
+; below AMSDOS space.  Banking only ever remaps #4000-#7FFF, so this
+; RAM is as stable as the code bank.
+; ----------------------------------------------------------------------
+note_table:                     ; AY periods (1 MHz/16/f), C2 up to C5
+        defw 956,902,851,803,758,716,676,638,602,568,536,506
+        defw 478,451,426,402,379,358,338,319,301,284,268,253,239
+        defw 225,213,201,190,179,169,159,150,142,134,127,119
+tune_b:                         ; the melody: sparse, minor, watchful
+        defb 0,16, 13,8, 16,8, 18,8, 20,24, 18,8, 16,8, 13,24
+        defb 0,8, 16,8, 18,8, 20,8, 23,24, 20,8, 18,8, 16,24
+        defb #FF
+tune_c:                         ; the bass: the pumps, far below
+        defb 1,32, 4,32, 6,32, 8,16, 6,16
+        defb 1,32, 4,32, 9,32, 8,16, 4,16
+        defb #FF
+
+; The title theme: eight bars of A minor, 125 bpm, quarter = 24 frames.
+; A rising-fifth hook walked back down, a relative-major lift, a
+; leading-tone cadence -- over a pumping root-fifth eighth-note bass.
+; Both voices total 768 frames (15.4 s), so they loop in lockstep.
+menu_tb:                        ; the melody, one bar per line
+        defb 22,24, 29,24, 27,24, 25,24
+        defb 24,24, 25,24, 22,44, 0,4
+        defb 22,24, 29,24, 27,24, 25,24
+        defb 24,24, 21,24, 22,48
+        defb 25,24, 29,24, 32,24, 29,24
+        defb 30,24, 29,24, 27,24, 24,24
+        defb 22,24, 25,24, 24,24, 21,24
+        defb 22,72, 0,24
+        defb #FF
+menu_tc:                        ; the bass: Am Am F E / C G Am-E Am
+        defb 10,12, 17,12, 10,12, 17,12, 10,12, 17,12, 10,12, 17,12
+        defb 10,12, 17,12, 10,12, 17,12, 10,12, 17,12, 10,12, 17,12
+        defb 6,12, 13,12, 6,12, 13,12, 6,12, 13,12, 6,12, 13,12
+        defb 5,12, 12,12, 5,12, 12,12, 5,12, 12,12, 5,12, 12,12
+        defb 13,12, 8,12, 13,12, 8,12, 13,12, 8,12, 13,12, 8,12
+        defb 15,12, 8,12, 15,12, 8,12, 15,12, 8,12, 15,12, 8,12
+        defb 10,12, 17,12, 10,12, 17,12, 5,12, 12,12, 5,12, 12,12
+        defb 10,24, 17,24, 10,24, 0,24
+        defb #FF
+
+; --- every string the game prints, same reasoning
+txt_title:      defb "THE SHAFT",0
+txt_tag:        defb "THE TRUTH IS ABOVE",0
+txt_press:      defb "PRESS SPACE TO START",0
+txt_ctl1:       defb "CURSORS - MOVE AND CLIMB",0
+txt_ctl2:       defb "SPACE - JUMP    Z - WHIP",0
+txt_ctl3:       defb "DOWN - DUCK - SLIDE",0
+txt_credit:     defb "REVIVE8BIT - 2026",0
+txt_credit_menu: defb "REVIVE8BIT - 2026 - VASPER",0
+txt_end_t:      defb "THE AIRLOCK",0
+txt_end_1a:     defb "THE SEAL GRINDS OPEN",0
+txt_end_1b:     defb "COLD AIR RUSHES IN",0
+txt_end_2t:     defb "OUTSIDE",0
+txt_end_2a:     defb "GREEN HILLS TO THE",0
+txt_end_2b:     defb "HORIZON  CLEAN AIR",0
+txt_end_2c:     defb "THE POISON WAS A LIE",0
+txt_end_2d:     defb "THE SHAFT WAS A CAGE",0
+txt_end_3t:     defb "THE END",0
+txt_end_3b:     defb "PRESS FIRE",0
+txt_score:      defb "SCORE 0000",0
+
+txt_lvl:        defb "LVL",0
+
+; The lift's LED readout: segment masks (gfedcba) for 0-9, and each
+; segment's box {dx, scanline, w bytes, h lines} over the door at 168.
+seg_font:       defb #3F,#06,#5B,#4F,#66,#6D,#7D,#07,#7F,#6F
+seg_geom:       defb 0,168,3,1          ; a: top bar
+                defb 2,168,1,4          ; b: top right
+                defb 2,172,1,4          ; c: bottom right
+                defb 0,175,3,1          ; d: bottom bar
+                defb 0,172,1,4          ; e: bottom left
+                defb 0,168,1,4          ; f: top left
+                defb 0,171,3,1          ; g: the crossbar
+
+; --- the attract loop's exhibits: every object, one row each
+txt_know:       defb "KNOW YOUR SHAFT",0
+txt_i_key:      defb "KEYCARD - OPENS ITS DOOR",0
+txt_i_door:     defb "DOOR - MATCH ITS COLOR",0
+txt_i_switch:   defb "SWITCH - UNSEALS A VAULT",0
+txt_i_vault:    defb "VAULT - HOLDS A RED KEY",0
+txt_i_med:      defb "MEDKIT - 1 TO 4 ENERGY",0
+txt_i_lift:     defb "LIFT - RIDES KNOWN STOPS",0
+txt_i_duct:     defb "DUCT - DUCK OR SLIDE",0
+txt_i_drip:     defb "RED DRIP BAD - WHITE OK",0
+txt_i_vent:     defb "VENT - DODGE THE STEAM",0
+txt_i_drone:    defb "DRONE - WHIP IT UPWARD",0
+txt_i_guard:    defb "GUARDS SHOOT - DUCK LOW",0
+info_tab:                       ; tile, y, text -- the museum's rows
+        defb 10,16
+        defw txt_i_key
+        defb 56,32
+        defw txt_i_door
+        defb 23,48
+        defw txt_i_switch
+        defb 25,64
+        defw txt_i_vault
+        defb 20,80
+        defw txt_i_med
+        defb 19,96
+        defw txt_i_lift
+        defb 43,112
+        defw txt_i_duct
+        defb 21,136
+        defw txt_i_drip
+        defb 26,152
+        defw txt_i_vent
+
+; ----------------------------------------------------------------------
+; line_offsets -- offset of each scanline's first byte within a 16K
+; screen, generated at assembly time:
+;     offset(y) = (y AND 7)*#800 + (y/8)*80
+; Built with nested repeats (25 character rows of 8 scanlines) rather
+; than division, because rasm evaluates "/" in floating point.
+; ----------------------------------------------------------------------
+line_offsets:
+lrow=0
+        repeat 25               ; 25 character rows down the screen...
+lline=0
+        repeat 8                ; ...of 8 interleaved scanlines each
+        defw lline*#800+lrow*80
+lline=lline+1
+        rend
+lrow=lrow+1
+        rend
+        assert $ < #A600        ; below the AMSDOS work RAM

@@ -22,14 +22,21 @@ world slides around him: he **walks out along the bottom floor**, climbs
 **a long ladder** (3 s), heads along the deck, **jumps a gap**, **waits
 out a steam vent**, **throws a switch**, climbs **a second ladder**,
 **pockets a yellow keycard** and walks through **the yellow door it
-opens** — 12.6 seconds in all. The one sound is a footstep built to a
-Locomotive BASIC reference (`ENV 1,3,-5,3` + `SOUND 1,0,2,15,1,0,n`):
-noise only, the noise period alternating 26 and 22 for the left and
-right boot — and a duration of 2, which cuts the envelope at its first
-step: one dry tick at volume 15, gone at the next update. It is struck
-ON the leg swap and cut in real 50 Hz frames, so neither its pace nor
-its length follows the redraw cost. It is built from the game's own
-tileset and compiled sprites; nothing is drawn twice.
+opens** — 12.6 seconds in all. While he walks or climbs — and only
+then — a beat strikes every 10 frames, alternating two Locomotive
+BASIC sounds (`SOUND 1,0,3,8,1,1,0` / `...,1,2,0` with `ENV 1,3,-5,3`):
+tone 0 and noise 0, so neither generator runs and the sound is the
+AY's **DC step** — the level jumps to 8 for one ~30 ms envelope step
+and drops back, a soft click each way (the digidrum trick). With no
+tone the ENT number is inaudible, so the alternation lives in the
+animation. On top of that ride the game's own one-shot voices: the
+**rising jump chirp** as he leaves the deck, and the **ping** on the
+switch, the key and the door — each owning the channel while it rings,
+the click standing aside. The
+beat is also what swaps the walking legs and the climbing hands, so
+every strike is a footfall or a rung grab; all of it counts real 50 Hz
+frames, so nothing follows the redraw cost. It is built from the
+game's own tileset and compiled sprites; nothing is drawn twice.
 
 ```sh
 ./build_demo.sh     # -> build/theshaftdemo.dsk, then RUN"DEMO
@@ -58,17 +65,22 @@ the interrupt's 50 Hz frame count rather than by how long a redraw
 took, so the beats keep their timing even if the raster is missed.
 
 **Verifying without a CPC.** `tools/z80mini.py` is a Z80 subset big
-enough to *execute* the assembled binary, and `build_demo.sh` runs four
-harnesses over it:
+enough to *execute* the assembled binary; `build_demo.sh` runs four
+harnesses over it and `build.sh` two more:
 
 | | checks |
 |---|---|
 | `verify_demo.py` | the camera frame by frame, the set edits, and 54 rendered frames against an independent model, pixel for pixel |
 | `verify_demo_loop.py` | the **whole** update including the erase pass, proving it never writes outside the screen buffers |
-| `verify_demo_sfx.py` | the footstep against the BASIC spec: struck at 15, noise only, alternating 26/22 per boot, cut after its first envelope step and the channel closed — at every realistic update length |
-| `verify_demo_timeline.py` | the real main loop from `start:`, asserting what a **listener** would report: step rate, decay length, silence between |
+| `verify_demo_sfx.py` | each click against the BASIC spec (level 8, both generators off, one envelope step, phase alternating) at every realistic update length; the jump chirp's rising sweep and the ping's legal fade; that the leap/switch/key/door trigger them; and that a ringing one-shot makes the click yield |
+| `verify_demo_timeline.py` | the real main loop from `start:`: a 15-frame beat inside every movement stretch, alternating neighbours, zero strikes at rest |
+| `verify_music.py` | the game's title theme, executed: both voices lock a 768-frame (15 s) loop, the register stream matches an independent model write for write, the bass volume reaches R10 (not R11, where the first player sent it), and the mixer keeps the keyboard alive |
+| `verify_steps.py` | the mechanic's movement sounds, in game_loop's real frame order: a click every 5 walking frames and a metallic rung tick at the same cadence on ladders, each closing in 20 ms; silence when standing, resting on the rails, or airborne (air control sets `player_moved` and falling changes `player_y` — both traps are tested); and priority both ways: a boot never clips a ringing effect, a fresh effect replaces a boot at once |
+| `verify_enemies.py` | the rifle ramp level by level (0 rifles at 9, one at 10, all by 42 — and never a coat man); when a guard pulls the trigger (his walkway, his facing, never point-blank); the bullet frame by frame — it finds a standing chest, passes over a DUCKED head and under a jumper, dies on crates and walls; the drone's homing, its detonation (harmless through the immunity flicker, but it still goes off), the dispatcher's odds and 1→3 ceiling by level and its silence below 20; the whip killing a flyer with the overhead and diagonal cracks but never the side one; and that `check_enemy_hit` leaves both new types to judge their own contact |
+| `verify_menu.py` | the attract pages, executed: both sides land identically in both buffers, all 11 exhibit rows carry a picture and caption, and the exhibits leave lines 120–127 black for the blinking prompt |
+| `verify_lift.py` | the lift's LED floor readout decoded back OFF THE SCREEN, segment for segment, for four different stops; not a pixel on lift-less levels; the double doors' 8-byte catchment probed player-position by player-position; and the HUD's LVL label static while the number tracks the level |
 
-The middle one exists because it was missing: the first verifier only
+The second one exists because it was missing: the first verifier only
 ever drove the draw half, so a wild row counter in the erase path
 reached a real CPC and reset it. `tools/demo_preview.py` renders the
 video the same way — the preview is the engine's own output, not a
@@ -133,9 +145,9 @@ it draws the REVIVE8BIT title screen (`docs/revive8b.scr`, inks per
 starts the game.
 
 **Controls:** cursor keys + Space + **Z**, or joystick 0 (fire 1 = jump,
-fire 2 = lasso). Walk left/right, climb ladders with up/down (mount-assist
+fire 2 = whip). Walk left/right, climb ladders with up/down (mount-assist
 snaps you onto the rails). Space jumps — real ballistic arcs with air
-control, head bumps, mid-fall ladder grabs. **Z cracks the cable lasso**:
+control, head bumps, mid-fall ladder grabs. **Z cracks the cable whip**:
 snares any person on your walkway within 16 pixels, in the direction you
 face. **Down ducks** (debris and swings pass over your head), **Down +
 direction slides** — a fast low burst, one per press, momentum enough to
@@ -184,7 +196,7 @@ stay open for the whole run** — every door has a persistent id in a
 already gone (and every key cell has its own id too: **a taken key never reappears** — the supply is exactly what the generator placed, which the build-time verifier proves sufficient). Medical crates
 only start appearing from level 20.
 
-**The lasso aims from the cursor**: plain Z whips sideways as before;
+**The whip aims from the cursor**: plain Z whips sideways as before;
 hold **up** for a straight overhead snare (2 px wide, 16 tall), or
 **up + a direction** for a 45° rising diagonal — all clamped at walls
 and roof, all drawn as stepped rope segments. The build-time verifier threads one global key inventory through
@@ -263,12 +275,12 @@ a rock-steady screen throughout.
 | `update_player` | The physics state machine: GROUND / CLIMB / AIR. 8.8 fixed-point vertical velocity (`player_yfrac`+`player_y` read as one word), gravity with terminal velocity capped below one tile so falls can't tunnel |
 | `is_supported` | "Can I stand here?": a solid under the feet, or feet exactly at a ladder's through-hole (`ladder.y+16`, from the head-room convention). The raw ladder bit deliberately doesn't count — that would let you stand on air beside a ladder |
 | `start_jump` / `start_fall` | Enter AIR with `JUMP_VY` or from rest; both arm the apex tracker that feeds the fall-height hook (`last_fall`) for future damage |
-| `update_drones` / `check_drone_hit` | Security drones: 8-byte entity records, patrol between bounds compiled from the map, rotor frame swap every 8 frames (ticker bit 3), AABB contact check → death |
+| `update_drones` / `riot_fire` | The escalation: from level 10 riot guards carry rifles (the first, then one more every 8 levels, until all) — `riot_fire` shoots only at walkway height, on the facing side, never point-blank, and the round flies at gun height where a **duck** (or a jump) clears it. From level 20 `update_drones` sometimes launches a kamikaze drone (odds and 1–3 ceiling climb with the level, LFSR-seeded from the 300 Hz clock) that homes on the player and detonates for one energy — the **overhead or diagonal whip** brings it down; the side crack passes under it |
 | `copy_levels_to_bank` / `load_level` | The 128K: all level blobs live in extra-RAM bank 4 (`#C4` over `#4000-#7FFF`, video unaffected); entering a level copies one blob into a writable main-RAM buffer |
 | `next_level` / `enter_level` | Flip-screen climb: y<8 → next level from the bank, player re-enters at the floor keeping X (exit and entry ladders share a column, checked by the generator) |
 | `check_keycards` / `check_doors` | Keycards are tiles (edited out of map RAM, re-blitted on both buffers); doors are SOLID\|DOOR rects + tiles — push with a card to delete both |
 | `draw_char` / `draw_text` (+`_2x`) | 38-glyph 8×8 font, 1 bit/pixel, expanded through `pen_left` at draw time to any pen; glyphs 0–15 are the hex digits, so the HUD prints values directly |
-| `psg_write` / `sfx_*` | AY-3-8912 via the PPI: jump chirp (shrinking tone period), damage noise burst with volume decay, keycard ping. Mixer bit 6 stays 0 — it's the keyboard's port direction! |
+| `psg_write` / `sfx_*` | AY-3-8912 via the PPI: jump chirp (shrinking tone period), damage noise burst with volume decay, keycard ping — and `step_tick`: a DC-click footfall (level 8, both generators off) every 5 walking frames plus a metallic rung tick (tone period 100) while a climb actually moves, lowest priority on channel A. Mixer bit 6 stays 0 — it's the keyboard's port direction! |
 
 All art is authored as ASCII, one character per pixel:
 
@@ -300,7 +312,9 @@ it; `_r` looks right, `_l` is the tool-mirrored copy.
 | ![](docs/gfx/spr_rock.png) | Debris `spr_rock` | 1 | 6 | What the thrower drops: falls 3 lines/frame, half-height (8 px) hitbox, shatters on the first solid |
 | ![](docs/gfx/spr_drips.png) | Drips `spr_drip_red`/`_white` | 1 each | 5 / 1 | Lubricant from leaky ceiling pipes, falling 2 lines/frame. **Red hurts, white is water** — read the stain on the pipe |
 | ![](docs/gfx/spr_steam.png) | Steam `spr_steam_a`/`_b` | 2 | 1, 10 | A vent's blast: a standing 16-line column, flickering fast, lethal to touch for ~45 frames. Vent clocks run off the 300 Hz interrupt counter |
-| | Lasso rope | drawn, not stored | 7 | Not a sprite: `fill_rect` segments — a side line, a vertical line, or stepped 1×2 diagonal pieces, per the aim |
+| ![](art/sprites/spr_bullet.png) | Bullet `spr_bullet` | 1 | 1 | A riot guard's tracer round (level 10 up): flies at gun height, 1 byte/frame — duck under it, jump over it, or eat one energy point |
+| ![](art/sprites/spr_drone_a.png) | Drone `spr_drone_a`/`_b` | 2 | 1, 2, 3, 5 | The kamikaze flyer (level 20 up): rotor-blur frames alternate every 2 ticks; homes on the player and detonates on contact for one energy. Only the overhead or diagonal whip reaches it |
+| | Whip rope | drawn, not stored | 7 | Not a sprite: `fill_rect` segments — a side line, a vertical line, or stepped 1×2 diagonal pieces, per the aim |
 
 ### Background tiles — 8×8 px opaque (4 bytes × 8 lines, raw, 32 bytes each)
 
@@ -328,7 +342,7 @@ fixed.
 | 16 | ![](docs/gfx/tile_16_grate.png) | `grate` | decor | Ventilation grate slats |
 | 17 | ![](docs/gfx/tile_17_bush.png) | `bush` | decor | Hydroponic planter in an orange pot |
 | 18 | ![](docs/gfx/tile_18_panel.png) | `panel` | decor | Wall terminal with scan-lined screen |
-| 19 | ![](docs/gfx/tile_19_elevator.png) | `elevator` | interactive | Lift door on stop levels (1, 10…50): stand here, Up/Down rides between visited stops |
+| 19 | ![](docs/gfx/tile_19_elevator.png) | `elevator` | interactive | Lift **double doors** (2×2 tiles) on stop levels (1, 10…50): stand at them, Up/Down rides between visited stops — and the level number burns above them in red seven-segment digits (`draw_lift_panel`, `fill_rect` segments, redrawn every frame) |
 | 20 | ![](docs/gfx/tile_20_medkit.png) | `medkit` | pickup | Medical crate (white, red cross): 1–4 energy, overflow past 5 banks a life; levels 20+ only |
 | 21 | ![](docs/gfx/tile_21_leak_red.png) | `leak_red` | hazard source | Ceiling pipe with a **red-stained** hole: drips lubricant that costs energy |
 | 22 | ![](docs/gfx/tile_22_leak_white.png) | `leak_white` | decor source | Same pipe, clean drip — a harmless fake-out |
@@ -388,13 +402,26 @@ buffer **two** frames ago, not last frame's. The engine keeps one previous
    16K banks of level data loaded by the BASIC loader; zone palettes.
    Human enemies replace the drones: riot-gear guards (slow patrol),
    long-coat crowbar men (fast patrol), throwers dropping debris from the
-   platform above. Player fights back: lasso, duck, slide *(done)*
+   platform above. Player fights back: whip, duck, slide *(done)*
 7. ~~Polish~~ — steam vents timed off the 300 Hz interrupt counter,
    fall damage via `last_fall`, walk animation, the airlock ending
-   sequence (three pages, green horizon, the truth), a two-voice AY
-   dirge on channels B+C (channel A stays with the SFX via a shared
-   mixer), and **compiled sprites**: every frame is a generated Z80
-   routine at `#8000` that draws itself — opaque bytes cost 10 T
-   instead of 38, empty rows cost nothing, and the masked-data blobs
-   left the main bank entirely *(done)*
-8. Next: more zones? boss floors? your move
+   sequence (three pages, green horizon, the truth), two-voice AY
+   music on channels B+C (channel A stays with the SFX via a shared
+   mixer): a **title theme** — eight bars of A minor over a pumping
+   root-fifth bass, both voices exactly 768 frames so it repeats
+   every 15 seconds — and the ending's dirge, whose two loops drift
+   and never quite repeat. And **compiled sprites**: every frame is a
+   generated Z80 routine at `#8000` that draws itself — opaque bytes
+   cost 10 T instead of 38, empty rows cost nothing, and the
+   masked-data blobs left the main bank entirely *(done)*
+8. ~~Escalation~~ — from level 10 the riot guards start **shooting**:
+   the first carries a rifle, one more every 8 levels, until all do;
+   the round flies at gun height, so a duck (or a jump) clears it.
+   From level 20 the shaft dispatches **kamikaze drones** — rare at
+   first, up to three aloft near the top, LFSR-random, homing, one
+   energy point on detonation, and only the overhead or diagonal whip
+   brings one down. Plus the title screen's **attract loop**: every
+   5 seconds the menu swaps with a KNOW YOUR SHAFT exhibits page —
+   eleven objects, each with its picture — and Space starts the game
+   from either side *(done)*
+9. Next: more zones? boss floors? your move

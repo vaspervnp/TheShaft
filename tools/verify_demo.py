@@ -110,10 +110,9 @@ def model(cam, anim, elapsed, ctr, ids, steam, phase):
             sprite('spr_steam_a' if not (ctr & 4) else 'spr_steam_b', sx, sy)
 
     if anim == D.CLIMB:
-        # a rung is not a footfall, so the climb still steps off the
-        # update counter; the walk's leg is chosen by walk_phase, which
-        # the footfall flips, so sound and feet cannot drift apart
-        name = 'spr_mech_climb' + ('_b' if (ctr + 1) & 8 else '')
+        # the beat picks the climbing hands AND the walking legs, so
+        # the strike is always the footfall or the rung grab
+        name = 'spr_mech_climb' + ('_b' if phase & 4 else '')
     elif anim == D.WALK_L:
         name = 'spr_mech_l' + ('_b' if phase & 4 else '')
     elif anim == D.WALK_R:
@@ -155,7 +154,7 @@ def render(ctr):
     n = run(Z80(), S('OBJECT_PASS'))
     n += run(Z80(), S('DRAW_STEAM'))
     n += run(Z80(), S('DRAW_HERO'))
-    return grab(), n, MEM[S('WALK_PHASE')]
+    return grab(), n, MEM[S('BEAT_PHASE')]
 
 
 # --------------------------------------------------------------- the run
