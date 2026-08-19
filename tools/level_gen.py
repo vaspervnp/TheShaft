@@ -324,7 +324,7 @@ LEVEL1 = [
     "W#########L########W",
     "W5..0..6..L........W",
     "W5779886..L........W",
-    "W5..0..6..L........W",
+    "W5..0..6..L.....EE.W",
     "W5779CC6..L.....EE.W",
     "Wh..0CC6..L.....EEhW",
     "FFFFFFFFFFFFFFFFFFFF",
@@ -645,17 +645,18 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
                     break
 
     # the elevator door on the bottom floor (levels 1, 10, 20, ...):
-    # double doors, two tiles wide -- and the row above stays clear,
-    # because the engine paints a seven-segment floor readout there
+    # double doors, two tiles wide and THREE tall -- and the row above
+    # stays clear, because the engine paints a seven-segment floor
+    # readout there
     elev_col = None
     if elevator:
         for _ in range(40):
             c = rng.randrange(3, 16)
             if (abs(c - l0) >= 3 and abs(c + 1 - l0) >= 3
                     and all(grid[r][cc] == '.'
-                            for r in (21, 22, 23) for cc in (c, c + 1))):
+                            for r in (20, 21, 22, 23) for cc in (c, c + 1))):
                 for cc in (c, c + 1):
-                    grid[22][cc] = grid[23][cc] = 'E'
+                    grid[21][cc] = grid[22][cc] = grid[23][cc] = 'E'
                 elev_col = c
                 break
         # a stop level MUST get its doors -- fail loudly and let the

@@ -250,6 +250,54 @@ run(cpu(), S("WHIP_HITS"))
 chk(rec(0)[0] == ET_DYING, "...while a guard on the walkway still snares")
 
 # ======================================================================
+print("--- the whole crack, end to end: keys -> update_player arms ->")
+print("    timer runs -> game_loop's resolve -> the drone falls")
+INP_RIGHT, INP_UP, INP_ACT = 1 << 1, 1 << 2, 1 << 5
+WHIP_TIME = 10
+FLOOR = ((0, 80, 192, 8, 1),)             # a real deck to stand on
+
+
+def crack_chain(press=0, hold=0, drone=(40, 150), frames_max=60):
+    """game_loop's exact per-frame order -- update_player (which counts
+    the whip down and arms it on the press edge), update_entities, then
+    the resolve at WHIP_TIME-4 -- with the keys held for one frame and
+    real physics on a real floor.  Returns what became of the drone."""
+    world(40, 176, rects=FLOOR)
+    MEM[S("SCORE") + 3] = 0
+    ent(0, ET_DRONE, x=drone[0], y=drone[1])
+    for fr in range(frames_max):
+        MEM[S("INPUT_NEW")] = press if fr == 0 else 0
+        MEM[S("INPUT_HELD")] = hold if fr == 0 else 0
+        run(cpu(), S("UPDATE_PLAYER"))
+        run(cpu(), S("UPDATE_ENTITIES"))
+        if MEM[S("WHIP_TIMER")] == WHIP_TIME - 4:
+            run(cpu(), S("WHIP_HITS"))
+        if rec(0)[0] != ET_DRONE:
+            return (fr, MEM[S("PLAYER_ENERGY")], MEM[S("SFX_TYPE")],
+                    MEM[S("SCORE") + 3])
+    return (None, MEM[S("PLAYER_ENERGY")], MEM[S("SFX_TYPE")],
+            MEM[S("SCORE") + 3])
+
+
+fr, en, sfx, sc = crack_chain(press=INP_ACT, hold=INP_UP)
+chk(fr is not None and fr <= 6 and en == 5 and sfx == SFX_KILL and sc == 1,
+    f"Z + UP with a drone overhead: it falls at frame {fr}, no energy "
+    f"lost, the kill rings, +1 score")
+fr, en, sfx, sc = crack_chain(press=INP_ACT, hold=INP_UP | INP_RIGHT,
+                              drone=(45, 158))
+chk(fr is not None and fr <= 6 and en == 5 and sc == 1,
+    f"Z + UP + RIGHT, drone high to the right: the diagonal takes it "
+    f"(frame {fr})")
+fr, en, sfx, sc = crack_chain()
+chk(fr is not None and en == 4 and sfx == SFX_HIT and sc == 0,
+    f"no whip: the same drone detonates on him at frame {fr} for one "
+    f"energy -- the danger is real")
+fr, en, sfx, sc = crack_chain(press=INP_ACT)
+chk(fr is not None and en == 4 and sc == 0,
+    f"the SIDE crack (no aim) never touches it: it still detonates "
+    f"(frame {fr}) -- aim upward, as the manual says")
+
+# ======================================================================
 print("--- contact bookkeeping stays with the specialists")
 world(40, 160)
 ent(0, ET_BULLET, x=40, y=165, dir=1)

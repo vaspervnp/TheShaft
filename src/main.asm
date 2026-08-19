@@ -5510,15 +5510,15 @@ txt_score:      defb "SCORE 0000",0
 txt_lvl:        defb "LVL",0
 
 ; The lift's LED readout: segment masks (gfedcba) for 0-9, and each
-; segment's box {dx, scanline, w bytes, h lines} over the door at 168.
+; segment's box {dx, scanline, w bytes, h lines} over the door at 160.
 seg_font:       defb #3F,#06,#5B,#4F,#66,#6D,#7D,#07,#7F,#6F
-seg_geom:       defb 0,168,3,1          ; a: top bar
-                defb 2,168,1,4          ; b: top right
-                defb 2,172,1,4          ; c: bottom right
-                defb 0,175,3,1          ; d: bottom bar
-                defb 0,172,1,4          ; e: bottom left
-                defb 0,168,1,4          ; f: top left
-                defb 0,171,3,1          ; g: the crossbar
+seg_geom:       defb 0,160,3,1          ; a: top bar
+                defb 2,160,1,4          ; b: top right
+                defb 2,164,1,4          ; c: bottom right
+                defb 0,167,3,1          ; d: bottom bar
+                defb 0,164,1,4          ; e: bottom left
+                defb 0,160,1,4          ; f: top left
+                defb 0,163,3,1          ; g: the crossbar
 
 ; --- the attract loop's exhibits: every object, one row each
 txt_know:       defb "KNOW YOUR SHAFT",0

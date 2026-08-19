@@ -235,7 +235,8 @@ it will still be there when you do.
 ## ELEVATORS
 
 Levels **1, 10, 20, 30, 40 and 50** have an elevator on the bottom
-floor: a full set of **double doors**, with the level number burning
+floor: a towering, full-height set of **double doors**, with the level
+number burning
 above them in **red seven-segment digits**, like the floor readout of
 any honest lift. Stand at the doors and press `↑` or `↓` to ride.
 

@@ -342,7 +342,7 @@ fixed.
 | 16 | ![](docs/gfx/tile_16_grate.png) | `grate` | decor | Ventilation grate slats |
 | 17 | ![](docs/gfx/tile_17_bush.png) | `bush` | decor | Hydroponic planter in an orange pot |
 | 18 | ![](docs/gfx/tile_18_panel.png) | `panel` | decor | Wall terminal with scan-lined screen |
-| 19 | ![](docs/gfx/tile_19_elevator.png) | `elevator` | interactive | Lift **double doors** (2×2 tiles) on stop levels (1, 10…50): stand at them, Up/Down rides between visited stops — and the level number burns above them in red seven-segment digits (`draw_lift_panel`, `fill_rect` segments, redrawn every frame) |
+| 19 | ![](docs/gfx/tile_19_elevator.png) | `elevator` | interactive | Lift **double doors** (2×3 tiles, 16×24 px) on stop levels (1, 10…50): stand at them, Up/Down rides between visited stops — and the level number burns above them in red seven-segment digits (`draw_lift_panel`, `fill_rect` segments, redrawn every frame) |
 | 20 | ![](docs/gfx/tile_20_medkit.png) | `medkit` | pickup | Medical crate (white, red cross): 1–4 energy, overflow past 5 banks a life; levels 20+ only |
 | 21 | ![](docs/gfx/tile_21_leak_red.png) | `leak_red` | hazard source | Ceiling pipe with a **red-stained** hole: drips lubricant that costs energy |
 | 22 | ![](docs/gfx/tile_22_leak_white.png) | `leak_white` | decor source | Same pipe, clean drip — a harmless fake-out |
