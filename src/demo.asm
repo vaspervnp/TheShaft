@@ -1145,6 +1145,7 @@ jump_arc_len    equ 30
 ; ======================================================================
         include "demo_scene.asm"
         include "levels.asm"
+        include "levels_hi.asm"
 
 ; --- offset of every scanline within a 16K buffer
 line_offsets:

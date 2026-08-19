@@ -17,6 +17,11 @@ from z80mini import Z80, MEM, load, run
 sym = load("build/shaft.bin", "build/shaft.sym")
 S = lambda n: sym[n.upper()]
 
+# what start: does first: carry the pixel shelf from the load image's
+# buffer-B gap (#4000) home to #A600
+HD, HE = S("HIDATA_START"), S("HIDATA_END")
+MEM[HD:HE] = MEM[0x4000:0x4000 + HE - HD]
+
 LO = S("LINE_OFFSETS")
 LINE = [MEM[LO + 2 * y] | MEM[LO + 2 * y + 1] << 8 for y in range(200)]
 FONT = [0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F]

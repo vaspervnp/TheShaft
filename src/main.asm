@@ -18,12 +18,15 @@
 ;                (copied there at init; the lower ROM is switched off
 ;                so the Z80 really executes our RAM bytes).
 ;   #0040-#0FFF  Stack. SP starts at #1000 and grows downwards.
-;   #1000-#3FFF  THIS FILE: engine code, tables, sprite data (~12K).
-;   #4000-#7FFF  SCREEN BUFFER B (16K).
-;   #8000-#A5FF  Reserved: tile graphics, current level tilemap,
-;                actor tables (filled in by the level-drawing pass).
-;   #A600-#BFFF  Reserved: AMSDOS work RAM during loading, then free
-;                scratch space (level unpacking buffer).
+;   #1000-#3FFF  THIS FILE: engine code and variables.
+;   #4000-#7FFF  SCREEN BUFFER B (16K).  In the LOAD IMAGE this range
+;                carries the #A600 shelf's pixel data (levels_hi.asm),
+;                which start: copies out before the first clear.
+;   #8000-#A5FF  Compiled sprites, then read-only data (music, text,
+;                line_offsets) -- the binary spans up to here.
+;   #A600-#BFFF  AMSDOS work RAM during loading; then the pixel shelf:
+;                tileset, font, pen table, palettes, menu map, LDIR'd
+;                here by start: from the load image's buffer-B gap.
 ;   #C000-#FFFF  SCREEN BUFFER A (16K) -- the buffer visible at boot.
 ;
 ;   DOUBLE BUFFERING
@@ -179,6 +182,15 @@ STEP_FRAMES     equ 5           ; a footfall every 5 frames of walking
 start:
         di
         ld sp,#1000             ; our stack, just below the code
+
+        ; --- The pixel data (tileset, font, menu map, palettes) rode
+        ; in at #4000, hidden behind the displayed buffer A.  Carry it
+        ; home to #A600 -- above the AMSDOS scar, below buffer A --
+        ; before anything reads a label or clears a screen.
+        ld hl,hidata_load
+        ld de,hidata_start
+        ld bc,hidata_end-hidata_start
+        ldir
 
         ; --- Gate Array: Mode 0, and switch BOTH ROMs out of the map.
         ; With the lower ROM off, address #0038 is our RAM -- required
@@ -5571,3 +5583,18 @@ lline=lline+1
 lrow=lrow+1
         rend
         assert $ < #A600        ; below the AMSDOS work RAM
+
+; ======================================================================
+; THE #A600 SHELF -- the big pixel data, assembled at its runtime home
+; (#A600, above the AMSDOS work area) but PLACED at #4000 in the load
+; image: it rides into RAM inside the binary's screen-buffer-B gap,
+; invisible behind the displayed buffer A, and start: LDIRs it here
+; before the first clear.  The disc file grows by nothing.
+; ======================================================================
+hidata_load     equ #4000
+        org #A600,hidata_load
+hidata_start:
+        include "levels_hi.asm"
+hidata_end:
+        assert hidata_end <= #C000              ; below screen buffer A
+        assert hidata_load+hidata_end-hidata_start <= #8000

@@ -238,10 +238,10 @@ more this matters.
 |---|---|
 | `#0000-#003F` | RST vectors; our IM 1 interrupt stub is copied to `#0038` |
 | `#0040-#0FFF` | Stack (SP starts at `#1000`, grows down) |
-| `#1000-#3FFF` | Engine code, tables, sprite data (`src/main.asm`) |
-| `#4000-#7FFF` | **Screen buffer B** (16K) |
-| `#8000-#A5FF` | Tile graphics, current level tilemap, actor tables (future) |
-| `#A600-#BFFF` | AMSDOS work RAM during load, then unpack/scratch space |
+| `#1000-#3FFF` | Engine code and variables (`src/main.asm`) |
+| `#4000-#7FFF` | **Screen buffer B** (16K). In the *load image* this range carries the `#A600` shelf's pixel data, hidden behind the displayed buffer A; `start:` copies it out before the first clear |
+| `#8000-#A5FF` | Compiled sprites, then read-only data: music, strings, `line_offsets` |
+| `#A600-#BFFF` | AMSDOS work RAM during load; then the **pixel shelf** — tileset, font, pen table, palettes, menu map (`levels_hi.asm`, assembled at `#A600` but placed at `#4000` in the file, so the disc grows by nothing) |
 | `#C000-#FFFF` | **Screen buffer A** (16K, visible at boot) |
 
 ### The second 64K
