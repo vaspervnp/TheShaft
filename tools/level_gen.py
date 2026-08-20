@@ -323,10 +323,10 @@ LEVEL1 = [
     "W5.L0..6..L......p.W",
     "W#########L########W",
     "W5..0..6..L........W",
-    "W5779886..L........W",
-    "W5..0..6..L.....EE.W",
-    "W5779CC6..L.....EE.W",
-    "Wh..0CC6..L.....EEhW",
+    "W5779886..Lae......W",
+    "W5..0..6..Lcq...EE.W",
+    "W5779CC6..Los...EE.W",
+    "Wh..0CC6..LAB...EEhW",
     "FFFFFFFFFFFFFFFFFFFF",
 ]
 
@@ -1306,6 +1306,24 @@ def main(asm_path, build_dir):
         w("; elevator stops, bottom terminus first\n")
         w(f"ELEV_COUNT      equ {len(stops)}\nelev_stops:\n")
         w(f"        defb {','.join(str(s) for s in stops)}\n")
+
+    # Every corridor doorway must be REACHABLE: its foot row is where
+    # the engine expects the player to stand (arch_scan reads row*8-8),
+    # so the row under that foot has to be solid.  A hand-made map once
+    # hung one a row too high and the mini-game behind it was
+    # unenterable -- from the deck the player was simply never at the
+    # doorway's y.
+    foot = tile_index("arch4l")
+    for n, lv in enumerate(levels, 1):
+        for r, row in enumerate(lv):
+            for c, ch in enumerate(row):
+                if tile_index(CHARMAP[ch]) != foot:
+                    continue
+                assert r + 1 < MAP_H, f"L{n}: doorway at the very bottom"
+                under = TILES[tile_index(CHARMAP[lv[r + 1][c]])][1]
+                assert under == SOLID, (
+                    f"L{n}: the doorway at col {c} row {r} floats -- "
+                    f"nothing solid under its foot")
 
     sizes = [len(b) for b in banks]
     print(f"{len(levels)} levels verified completable; banks: {sizes} bytes; "

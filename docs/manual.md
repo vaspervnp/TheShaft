@@ -255,17 +255,20 @@ the arch.** Stand at a marked one and press `↑`, and whatever runs
 behind it takes the screen: a ration counter to hold, a pest detail,
 a rigged salvage crane, a smuggler's handoff, a drone range, a fouled
 boiler, a firing drill. Seven side attractions play the shaft, each
-at two marquees — one low, one high — and each door plays you **once
-per visit**. Leave the level and come back to try again; when the
-arrow is dark, the show has run.
+at two marquees — one low, one high — and each door plays you **once,
+ever**. When its arrow is dark that show is finished for this run:
+leaving the level and coming back will not reopen it.
 
 Every one of them opens with a **briefing card**: the name of the job
 and the two rules that matter. Read it and press `SPACE` — or stand
 there thinking about it, and it starts on its own after ten seconds.
 
+`ESC` walks you out of any of them at any moment — the card, the game,
+the verdict. The doorway counts it as your turn all the same.
+
 They pay in energy, in score, and now and then — a perfect shift, a
 clean sheet, a lucky hook — in a whole life. They never pay in
-keycards. Some want a stake on the table first: the crane asks 500
+keycards. Some want a stake on the table first: the crane asks fifty
 points, and the house did not build it to lose.
 
 ---

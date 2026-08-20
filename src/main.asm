@@ -178,6 +178,9 @@ STEP_FRAMES     equ 5           ; a footfall every 5 frames of walking
 ; The mini-games behind the background arches (docs/minigames.md)
 TILE_ARCH_FOOT  equ 33          ; arch4l: the doorway's bottom-left
 MG_COUNT        equ 7           ; how many shows tour the shaft
+MG_ARCADE_L1    equ 0           ; the playtest arcade on level 1 --
+                                ; set to 1 to make its doorway cycle
+                                ; all seven shows without ever closing
 
         org #1000
 
@@ -2611,6 +2614,8 @@ draw_lift_panel:
         ld a,(elevator_col)
         inc a
         ret z                   ; no lift on this level
+        ld a,160                ; the panel sits over the doors
+        ld (seg_top),a
         ld a,(current_level)    ; split into tens and ones ("01" style:
         ld d,0                  ; a real panel keeps its leading zero)
 dlp_tens:
@@ -2649,7 +2654,9 @@ dlp_seg:
         ld a,(ix+0)             ; dx from the digit's column
         add a,b
         ld b,a
-        ld c,(ix+1)             ; scanline
+        ld a,(seg_top)          ; dy from the readout's own top line
+        add a,(ix+1)
+        ld c,a
         ld d,(ix+2)             ; width in bytes
         ld e,(ix+3)             ; height in lines
         ld a,#F0                ; both pixels pen 5: LED red
@@ -2926,12 +2933,35 @@ ub_head:
         add a,2                 ; the slug's last line
         cp d
         jp c,ue_next            ; over the (ducked) head -- or a jump
+        ld a,(mg_drill)         ; on the proving ground they are paint
+        or a                    ; rounds: they mark the card, they do
+        jr z,ub_wound           ; not wound the volunteer
+        ld a,1
+        ld (mg_f),a
+        ld a,20
+        ld (immune_timer),a     ; a flicker, for the sting of pride
+        ld a,SFX_HIT
+        call sfx_start
+        jr ub_die
+ub_wound:
         call take_hit           ; immunity-aware; may end the game
 ub_die:
         ld (ix+0),ET_DYING
         ld (ix+8),2
         jp ue_next
 ue_drone:
+        ld a,(mg_range)         ; on the calibration range they are
+        or a                    ; targets, not hunters: they come down
+        jr z,ud_hunt            ; the shaft they were released into
+        ld a,(ix+2)
+        add a,2
+        ld (ix+2),a
+        cp 184
+        jp c,ud_prox
+        ld (ix+0),ET_DYING      ; spent on the deck: a dud
+        ld (ix+8),2
+        jp ue_next
+ud_hunt:
         ld a,(ix+7)             ; sideways drift every other frame:
         and 1                   ; a walking man can outrun it
         jr nz,ud_fall
@@ -3322,6 +3352,14 @@ as_full:
 ; Fourteen marquee levels -- 5, 9, 13 ... 57 -- host the seven shows
 ; twice each, spread up the whole shaft.
 mg_bill:
+        if MG_ARCADE_L1
+        ld a,(current_level)    ; the playtest arcade on the first deck
+        dec a
+        jr nz,mgb_shaft
+        ld a,(mg_test)
+        ret
+mgb_shaft:
+        endif
         ld a,(current_level)
         sub 5
         jr c,mgb_no
@@ -3333,6 +3371,7 @@ mg_bill:
         ld a,b
         srl a
         srl a                   ; (level-5)/4 = marquee 0..13
+        ld (mg_marq),a
 mgb_m:
         sub MG_COUNT
         jr nc,mgb_m
@@ -3342,13 +3381,38 @@ mgb_no:
         ld a,#FF
         ret
 
+; mg_showbit -- A = marquee 0..13; HL -> its byte in shows_done and
+; A = its bit.  Fourteen doors, two bytes, one run.
+mg_showbit:
+        ld hl,shows_done
+        cp 8
+        jr c,msb_lo
+        sub 8
+        inc hl
+msb_lo:
+        inc a
+        ld b,a
+        xor a
+        scf
+msb_sh:
+        rla
+        djnz msb_sh
+        ret
+
 check_arch:
         call mg_bill
         inc a
         ret z                   ; a dark house: the arch is scenery
-        ld a,(mg_flag)
-        or a
-        ret nz                  ; one show per visit to the level
+        if MG_ARCADE_L1
+        ld a,(current_level)    ; the arcade never closes
+        dec a
+        jr z,ca_open
+        endif
+        ld a,(mg_marq)          ; played once, closed for good -- the
+        call mg_showbit         ; act does not tour twice
+        and (hl)
+        ret nz
+ca_open:
         ld a,(player_state)
         or a
         ret nz                  ; on his feet, not climbing or flying
@@ -3389,6 +3453,26 @@ mg_enter:
         call sfx_start
         call mg_bill            ; (check_arch already proved it valid)
         ld (mg_game),a
+        push af                 ; the doorway is spent from here on
+        ld a,(mg_marq)
+        call mg_showbit
+        or (hl)
+        ld (hl),a
+        pop af
+        if MG_ARCADE_L1
+        ld a,(current_level)    ; the arcade rolls on to the next act
+        dec a
+        jr nz,mge_go
+        ld a,(mg_test)
+        inc a
+        cp MG_COUNT
+        jr c,mge_st
+        xor a
+mge_st:
+        ld (mg_test),a
+mge_go:
+        ld a,(mg_game)          ; (the level test clobbered A)
+        endif
         add a,a
         ld hl,mg_table          ; (on the shelf, with the games)
         add a,l
@@ -3404,12 +3488,13 @@ mg_enter:
 ; draw_arch_sign -- the marquee: a pulsing arrow over every doorway
 ; with a show behind it, resting once the show has run this visit.
 draw_arch_sign:
-        ld a,(mg_flag)
-        or a
-        ret nz
         call mg_bill
         inc a
         ret z
+        ld a,(mg_marq)          ; a spent doorway shows no arrow
+        call mg_showbit
+        and (hl)
+        ret nz
         ld a,(arch_count)
         or a
         ret z
@@ -3534,6 +3619,8 @@ mr_rc:
         ld (player_duck),a
         ld (whip_timer),a
         ld (immune_timer),a
+        ld (mg_range),a         ; drones hunt again unless a range says
+        ld (mg_drill),a         ; rounds are live again unless a drill
         ld (slide_timer),a      ; no slide carried through a door
         ld (slide_lock),a
         ld (hint_glyph),a       ; no vault arrows over a stage
@@ -3562,13 +3649,18 @@ mr_pool:
         ld (draw_page),a
         jp draw_tilemap
 
-; mg_frame -- the shared per-frame head of every show's loop
+; mg_frame -- the shared per-frame head of every show's loop.  ESC
+; walks out of any of them: the card, the game, the verdict.  The
+; doorway stays spent -- you had your turn at it.
 mg_frame:
         call frame_sync
         call flip_buffers
         call read_input
         ld hl,frame_ctr         ; the walk animations and the guards'
         inc (hl)                ; step gates all count this
+        ld a,(key_matrix+8)     ; ESC sits beside Z on line 8
+        bit 2,a
+        jp z,mg_exit            ; (active low: 0 = pressed)
         jp sfx_update
 
 ; add_energy -- A points; past a full tank they bank a life (cap 9)
@@ -3602,6 +3694,7 @@ mv_wait:
         pop bc
         djnz mv_wait
         pop hl
+mg_say:                         ; ...or speak at once, with no wait
         push hl
         ld b,4                  ; into the hidden buffer...
         ld c,96
@@ -5091,6 +5184,8 @@ ms_blink:
         ld (keys_held+3),a
         ld (keys_held+4),a
         ld (visited_stops),a    ; the lift knows nothing yet
+        ld (shows_done),a       ; ...and every side attraction is on
+        ld (shows_done+1),a
         ld (switch_state),a     ; every vault sealed again
         ld (switch_state+1),a
         ld (switch_state+2),a
@@ -5723,6 +5818,7 @@ frame_ticks:    defb 0          ; ++ at 300 Hz by the interrupt stub
 input_held:     defb 0          ; current input flags (1 = held)
 input_new:      defb 0          ; flags that turned on this frame
 shown_r12:      defb 0          ; CRTC R12 value currently displayed
+seg_top:        defb 160        ; top line of the seven-segment readout
 draw_page:      defb 0          ; high byte of the DRAW buffer (#40/#C0)
 buf_index:      defb 0          ; 0/1 - selects the prev_pos slot below
 
@@ -5762,6 +5858,11 @@ attract_t:      defb 250        ; frames until the page turns (5 s)
 arch_count:     defb 0          ; doorways found on this level (0-2)
 arch_tab:       defs 4,0        ; per doorway: byte column, standing y
 mg_flag:        defb 0          ; a show already ran this visit
+mg_test:        defb 0          ; TEMPORARY: level 1's arcade cursor
+mg_marq:        defb 0          ; which of the fourteen doorways
+shows_done:     defs 2,0        ; the ones already played, all run
+mg_range:       defb 0          ; the gallery: drones drop, never hunt
+mg_drill:       defb 0          ; the firing line: rounds only mark
 mg_game:        defb 0          ; which show is on
 mg_ret_x:       defb 0          ; where the shaft takes him back
 mg_ret_y:       defb 0
@@ -5779,6 +5880,9 @@ mg_box:         defs 4,0        ; a parked whip box for slow loops
 mg_brf:         defw 0          ; the briefing card being shown
 mg_brf2:        defw 0          ; ...and the line cursor into it
 mg_brc:         defb 0          ; the next rule line's scanline
+mg_col:         defw 0          ; a readout's value and byte column
+mg_fl:          defw 0          ; the crane's shout: what it dredged up
+mg_flt:         defb 0          ; ...and how long it hangs there
 mix_a:          defb 9          ; channel A's mixer claim (tone/noise)
 music_on:       defb 0          ; theme on the menu, dirge on the ending
 mus_b_state:    defs 3,0        ; melody: stream ptr + frames left
@@ -5923,16 +6027,18 @@ txt_score:      defb "SCORE 0000",0
 
 txt_lvl:        defb "LVL",0
 
-; The lift's LED readout: segment masks (gfedcba) for 0-9, and each
-; segment's box {dx, scanline, w bytes, h lines} over the door at 160.
+; The seven-segment readout: masks (gfedcba) for 0-9, and each
+; segment's box {dx, dy, w bytes, h lines} RELATIVE to seg_top -- the
+; lift stands its panel at 160, the mini-games theirs at the very top
+; of the screen, where nothing they fly ever reaches.
 seg_font:       defb #3F,#06,#5B,#4F,#66,#6D,#7D,#07,#7F,#6F
-seg_geom:       defb 0,160,3,1          ; a: top bar
-                defb 2,160,1,4          ; b: top right
-                defb 2,164,1,4          ; c: bottom right
-                defb 0,167,3,1          ; d: bottom bar
-                defb 0,164,1,4          ; e: bottom left
-                defb 0,160,1,4          ; f: top left
-                defb 0,163,3,1          ; g: the crossbar
+seg_geom:       defb 0,0,3,1            ; a: top bar
+                defb 2,0,1,4            ; b: top right
+                defb 2,4,1,4            ; c: bottom right
+                defb 0,7,3,1            ; d: bottom bar
+                defb 0,4,1,4            ; e: bottom left
+                defb 0,0,1,4            ; f: top left
+                defb 0,3,3,1            ; g: the crossbar
 
 ; --- the attract loop's exhibits: every object, one row each
 txt_know:       defb "KNOW YOUR SHAFT",0
@@ -6028,15 +6134,23 @@ mg_clock:
         dec (hl)
 mgc_draw:
         ld a,(mg_sec)
-mg_pair:                        ; A as two digits on the berth
+mg_pair:                        ; A as two digits on the right berth
+        ld c,66
+mg_pair_at:                     ; ...or at byte column C
+        ld (mg_col),a
+        ld a,c
+        ld (mg_col+1),a
+        xor a                   ; a show's readouts live on the top
+        ld (seg_top),a          ; line, clear of everything in flight
         push af
-        xor a
-        ld b,66
-        ld c,160
+        ld b,c
+        ld c,0
         ld d,7
         ld e,8
+        xor a
         call fill_rect
         pop af
+        ld a,(mg_col)
         ld d,0
 mgp_t:
         cp 10
@@ -6047,12 +6161,16 @@ mgp_t:
 mgp_o:
         ld e,a
         ld a,d
-        ld b,66
+        ld a,(mg_col+1)
+        ld b,a
+        ld a,d
         push de
         call dlp_digit
         pop de
+        ld a,(mg_col+1)
+        add a,4
+        ld b,a
         ld a,e
-        ld b,70
         jp dlp_digit
 
 ; mg_brief -- the card before the curtain: HL -> a block of string
@@ -6234,24 +6352,41 @@ mpd_peg:
         ld (hl),a
         ret
 
-; mg_take500 -- stake 500 score; carry set = too poor to play
-mg_take500:
+; mg_take50 -- stake fifty points; carry set = too poor to play.
+; (Fifty, not five hundred: the shaft pays 1 for a felled guard, 2 for
+; a card and 3 for a door, so a 500 stake was a table nobody could
+; ever sit at.)
+mg_take50:
+        ld a,(score+2)
+        cp 5
+        jr nc,t50_pay           ; the tens alone cover it
         ld a,(score)
         or a
-        jr nz,t5_ok
+        jr nz,t50_bor
         ld a,(score+1)
-        cp 5
-        ret c
-t5_ok:
-        ld a,(score+1)
-        sub 5
-        jr nc,t5_st
-        add a,10
-        ld hl,score
-        dec (hl)
-t5_st:
-        ld (score+1),a
         or a
+        jr nz,t50_bor
+        scf                     ; nothing above either: he is broke
+        ret
+t50_bor:
+        ld a,(score+2)
+        add a,10                ; borrow ten tens from the left
+        ld (score+2),a
+        ld hl,score+1
+        ld a,(hl)
+        or a
+        jr nz,t50_h
+        ld (hl),9               ; the hundreds were spent too: the
+        dec hl                  ; thousands pay for both
+        dec (hl)
+        jr t50_pay
+t50_h:
+        dec (hl)
+t50_pay:
+        ld a,(score+2)
+        sub 5
+        ld (score+2),a
+        or a                    ; carry clear: the stake is down
         ret
 
 ; ======================================================================
@@ -6398,13 +6533,17 @@ tp_ok:
         ld hl,txt_mg_shift2
         jp mg_verdict
 
-tp_laney:                       ; lane index -> standing y
-        or a
-        ld a,176
-        ret z
+tp_laney:                       ; lane index -> standing y.  (An
+        or a                    ; ld does not touch the flags, so the
+        jr nz,tl_up             ; comparisons must happen BEFORE A is
+        ld a,176                ; loaded with the answer -- reading the
+        ret                     ; lane back out of a clobbered A once
+tl_up:                          ; cost this canteen its middle counter)
         cp 1
+        jr nz,tl_top
         ld a,128
-        ret z
+        ret
+tl_top:
         ld a,80
         ret
 
@@ -6515,7 +6654,14 @@ mm_np:
         call mm_age
         call render_entities
         call mm_show            ; rats over everything, every frame
-        call mg_clock
+        call mg_clock           ; the seconds, right
+        ld a,(mg_e)             ; the tally, left, beside a rat so it
+        ld c,2                  ; needs no caption
+        call mg_pair_at
+        ld b,12
+        ld c,0
+        ld de,spr_rat_a
+        call draw_sprite_8x16
         ld a,(mg_sec)
         or a
         jp nz,mm_loop
@@ -6700,10 +6846,15 @@ mm_spots:                       ; the six hatches: byte column, y
 mg_hook:
         ld hl,brf_hook
         call mg_brief
-        call mg_take500
+        if MG_ARCADE_L1
+        ld a,(current_level)    ; the playtest arcade plays for free
+        dec a
+        jr z,hk_paid
+        endif
+        call mg_take50
         jr nc,hk_paid
         ld hl,txt_mg_poor
-        jp mg_verdict
+        jp mg_say               ; a shaken head needs no dramatic pause
 hk_paid:
         ld hl,room_hook
         call mg_room
@@ -6720,6 +6871,8 @@ hk_paid:
         ld (mg_c),a             ; trolley direction
         xor a
         ld (mg_d),a             ; phase: 0 swing, 1 drop, 2 rise
+        ld (mg_f),a             ; the chain's half-pace tick
+        ld (mg_flt),a           ; nothing shouted yet
 hk_loop:
         call mg_frame
         ld ix,entities
@@ -6742,6 +6895,11 @@ hk_loop:
         ld hl,txt_mg_house      ; the chain man takes the crane back
         jp mg_verdict
 hk_swing:
+        ld hl,mg_f              ; the chain is heavy: half a byte a
+        inc (hl)                ; frame, so a man can time the drop
+        ld a,(hl)
+        and 1
+        jr nz,hks_f
         ld a,(mg_c)
         ld c,a
         ld a,(ix+1)             ; the trolley walks its rail
@@ -6784,6 +6942,26 @@ hk_draw:
         call render_entities
         ld a,(mg_a)             ; drops left on the berth
         call mg_pair
+        ld a,(mg_flt)           ; ...and what the last drop dredged up
+        or a
+        jp z,hk_loop
+        dec a
+        ld (mg_flt),a
+        cp 2
+        jr nc,hk_flash
+        xor a                   ; the last two frames wipe the word
+        ld b,20                 ; out of BOTH buffers
+        ld c,0
+        ld d,40
+        ld e,8
+        call fill_rect
+        jp hk_loop
+hk_flash:
+        ld hl,(mg_fl)
+        ld b,20
+        ld c,0
+        ld e,7
+        call draw_text_narrow
         jp hk_loop
 
 hk_prize:                       ; where it landed decides the odds
@@ -6797,6 +6975,8 @@ hk_prize:                       ; where it landed decides the odds
         ld a,1                  ; ten points of junk
         ld hl,score+2
         call mg_paydig
+        ld hl,txt_hk_junk
+        call hk_shout
         ld a,SFX_HIT
         jp sfx_start
 hkp_clean:
@@ -6808,17 +6988,29 @@ hkp_clean:
         ld a,5                  ; fifty of decent scrap
         ld hl,score+2
         call mg_paydig
+        ld hl,txt_hk_scrap
+        call hk_shout
         ld a,SFX_HIT
         jp sfx_start
 hkp_energy:
         ld a,1
         call add_energy
+        ld hl,txt_hk_energy
+        call hk_shout
         ld a,SFX_PING
         jp sfx_start
 hkp_life:
         call mg_life            ; the smuggler's stash!
+        ld hl,txt_hk_life
+        call hk_shout
         ld a,SFX_KILL
         jp sfx_start
+
+hk_shout:                       ; hold a word up for a second
+        ld (mg_fl),hl
+        ld a,52
+        ld (mg_flt),a
+        ret
 
 ; ======================================================================
 ; SHOW 3 -- THE BLACK MARKET.  A smuggler drops stock; the pipe's
@@ -7077,6 +7269,8 @@ mg_gallery:
         call mg_brief
         ld hl,room_gallery
         call mg_room
+        ld a,1
+        ld (mg_range),a         ; targets fall, they do not hunt
         xor a
         ld (mg_e),a             ; kills
         ld a,60
@@ -7100,7 +7294,14 @@ gl_loop:
 gl_nr:
         call update_entities
         call render_entities
-        call mg_clock
+        call mg_clock           ; the seconds, right
+        ld a,(mg_e)             ; the tally, left, beside a target
+        ld c,2
+        call mg_pair_at
+        ld b,12
+        ld c,0
+        ld de,spr_drone_a
+        call draw_sprite_8x16
         ld a,(mg_sec)
         or a
         jp nz,gl_loop
@@ -7177,6 +7378,8 @@ mg_boiler:
         ld (mg_c),a             ; dy
         ld a,3
         ld (mg_a),a             ; pellets left
+        xor a
+        ld (mg_d),a             ; the half-pace phase
         ld a,48
         ld (mg_e),a             ; crud remaining
 bl_loop:
@@ -7185,6 +7388,11 @@ bl_loop:
         ld a,(whip_timer)
         cp WHIP_TIME-4
         call z,bl_crack
+        ld hl,mg_d              ; the slag drifts at half pace: heavy,
+        inc (hl)                ; and a man with a whip needs the time
+        ld a,(hl)
+        and 1
+        jp nz,bl_draw
         ld ix,entities
         ld a,(mg_b)
         add a,(ix+1)
@@ -7318,10 +7526,10 @@ mg_firing:
         call mg_brief
         ld hl,room_firing
         call mg_room
-        ld a,(player_energy)
-        ld (mg_d),a             ; the clean-sheet snapshot
-        ld a,(game_lives)
-        ld (mg_e),a
+        ld a,1
+        ld (mg_drill),a         ; paint rounds: nobody dies at drill
+        xor a
+        ld (mg_f),a             ; ...but the card remembers every mark
         ld a,45
         ld (mg_sec),a
         ld a,50
@@ -7351,13 +7559,8 @@ fl_ns:
         ld a,(mg_sec)
         or a
         jp nz,fl_loop
-        ld a,(mg_d)
-        ld hl,player_energy
-        cp (hl)
-        jr nz,fl_pay
-        ld a,(mg_e)
-        ld hl,game_lives
-        cp (hl)
+        ld a,(mg_f)             ; a single mark spoils the sheet
+        or a
         jr nz,fl_pay
         call mg_life
         ld hl,txt_mg_clean
@@ -7475,7 +7678,7 @@ txt_bm2:        defb "WHIP 15 RATS IN 60 SEC",0
 txt_bm3:        defb "SPARE THE WHITE ONE",0
 brf_hook:       defw txt_bh1,txt_bh2,txt_bh3,0
 txt_bh1:        defb "THE HOOK",0
-txt_bh2:        defb "500 POINTS - 3 DROPS",0
+txt_bh2:        defb "50 POINTS - 3 DROPS",0
 txt_bh3:        defb "FIRE DROPS - DOWN LEAVES",0
 brf_market:     defw txt_bk1,txt_bk2,txt_bk3,0
 txt_bk1:        defb "MARKET",0
@@ -7484,7 +7687,7 @@ txt_bk3:        defb "WHITE - RED FREEZE",0
 brf_gallery:    defw txt_bg1,txt_bg2,txt_bg3,0
 txt_bg1:        defb "DRONES",0
 txt_bg2:        defb "WHIP 8 DRONES IN 60 SEC",0
-txt_bg3:        defb "UP AIM REACHES HIGHEST",0
+txt_bg3:        defb "THEY DROP - GET UNDER",0
 brf_boiler:     defw txt_bb1,txt_bb2,txt_bb3,0
 txt_bb1:        defb "BOILER",0
 txt_bb2:        defb "Z AND UP BATS IT BACK",0
@@ -7492,7 +7695,7 @@ txt_bb3:        defb "3 ON THE FLOOR AND OUT",0
 brf_firing:     defw txt_bf1,txt_bf2,txt_bf3,0
 txt_bf1:        defb "FIRING",0
 txt_bf2:        defb "DUCK HIGH - JUMP LOW",0
-txt_bf3:        defb "45 SEC - UNTOUCHED PAYS",0
+txt_bf3:        defb "PAINT ROUNDS - 45 SEC",0
 
 ; --- the closing lines ------------------------------------------------
 txt_mg_report:  defb "REPORTED - SHIFT OVER",0
@@ -7501,7 +7704,11 @@ txt_mg_shift2:  defb "SHIFT SERVED",0
 txt_mg_voided:  defb "BONUS VOIDED BY ORDER",0
 txt_mg_quota:   defb "QUOTA MET",0
 txt_mg_missed:  defb "QUOTA MISSED",0
-txt_mg_poor:    defb "COME BACK WITH 500",0
+txt_mg_poor:    defb "COME BACK WITH 50",0
+txt_hk_energy:  defb "A RATION PACK",0
+txt_hk_life:    defb "A SMUGGLERS STASH",0
+txt_hk_scrap:   defb "GOOD SCRAP - 50",0
+txt_hk_junk:    defb "JUNK - 10",0
 txt_mg_house:   defb "THE HOUSE THANKS YOU",0
 txt_mg_sold:    defb "STOCK SOLD OUT",0
 txt_mg_eye:     defb "THE EYE SAW YOU",0

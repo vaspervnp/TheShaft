@@ -45,6 +45,7 @@ def cpu(pc=None):
 def drive(z, stops, frames=0, feed=None, budget=120_000_000, brief=False):
     """Run until PC lands on a stop (or `frames` frames pass).  With
     brief=True the first FIRE press dismisses the briefing card."""
+    MEM[S("KEY_MATRIX") + 8] = 0xFF        # nobody leaning on ESC
     clock = 0
     while budget:
         if z.pc == FS:
@@ -85,6 +86,8 @@ def world(level=7):
     MEM[S("GAME_LIVES")] = 3
     MEM[S("IMMUNE_TIMER")] = 0
     MEM[S("MG_FLAG")] = 0
+    MEM[S("SHOWS_DONE")] = 0           # every doorway open again
+    MEM[S("SHOWS_DONE") + 1] = 0
     MEM[S("RND_STATE")] = 0x5A
     MEM[S("SFX_TIMER")] = 0
     MEM[S("MUSIC_ON")] = 0
@@ -153,6 +156,58 @@ for level, game in ((5, 0), (9, 1), (29, 6), (33, 0), (57, 6)):
         and MEM[S("MG_RET_X")] == 20 and MEM[S("MG_RET_Y")] == 176,
         f"level {level}: UP at the arch opens {GAMES[game]}, spot saved")
 
+# --- level 1 is the opening screen, not an arcade: its doorway is
+# scenery like every other unmarked arch
+world(1)
+MEM[cm + 23 * 20 + 11] = 33
+run(cpu(), S("ARCH_SCAN"))
+MEM[S("PLAYER_STATE")] = 0
+MEM[S("PLAYER_X")] = 44
+MEM[S("PLAYER_Y")] = 176
+MEM[S("INPUT_NEW")] = INP_UP
+MEM[S("MG_FLAG")] = 0
+z = cpu(S("CHECK_ARCH"))
+z.push(0x0002)
+stops = {S(g): g for g in GAMES}
+stops[0x0002] = "closed"
+w, _ = drive(z, stops, frames=4)
+chk(w == "closed" and MEM[S("MG_FLAG")] == 0,
+    "level 1 opens no show: the first deck is for learning to climb")
+
+# --- a doorway is spent for the whole run, not just the visit
+GSTOP = {S(g): g for g in GAMES}
+SENT = 0x0002
+
+
+def try_enter(level):
+    MEM[S("CURRENT_LEVEL")] = level
+    MEM[S("PLAYER_STATE")] = 0
+    MEM[S("PLAYER_X")] = 20
+    MEM[S("PLAYER_Y")] = 176
+    MEM[S("INPUT_NEW")] = INP_UP
+    z = cpu(S("CHECK_ARCH"))
+    z.push(SENT)
+    stops = dict(GSTOP)
+    stops[SENT] = "closed"
+    w, _ = drive(z, stops, frames=4)
+    return w
+
+
+world(9)
+MEM[cm + 23 * 20 + 5] = 33
+run(cpu(), S("ARCH_SCAN"))
+chk(try_enter(9) == "MG_MOLES", "the first visit opens the show")
+MEM[S("CURRENT_LEVEL")] = 10          # he climbs away...
+run(cpu(), S("ARCH_SCAN"))
+MEM[S("CURRENT_LEVEL")] = 9           # ...and comes back down
+run(cpu(), S("ARCH_SCAN"))
+chk(try_enter(9) == "closed",
+    "leaving the level and returning does NOT reopen it")
+chk(try_enter(13) == "MG_HOOK", "...while another doorway still plays")
+MEM[S("SHOWS_DONE")] = 0
+MEM[S("SHOWS_DONE") + 1] = 0
+chk(try_enter(9) == "MG_MOLES", "a new game reopens every house")
+
 # ======================================================================
 print("--- the marquee sign and the fixed books (audit regressions)")
 LO = S("LINE_OFFSETS")
@@ -171,10 +226,13 @@ MEM[0xC000:0x10000] = bytes(0x4000)
 MEM[S("DRAW_PAGE")] = 0xC0
 run(cpu(), S("DRAW_ARCH_SIGN"))
 chk(sign_ink(22, 152) > 5, "the pulsing arrow burns over a live doorway")
-MEM[S("MG_FLAG")] = 1
+MEM[S("SHOWS_DONE")] = 0xFF
+MEM[S("SHOWS_DONE") + 1] = 0xFF
 MEM[0xC000:0x10000] = bytes(0x4000)
 run(cpu(), S("DRAW_ARCH_SIGN"))
-chk(sign_ink(22, 152) == 0, "...and rests once the show has run")
+chk(sign_ink(22, 152) == 0, "...and goes dark once that show has run")
+MEM[S("SHOWS_DONE")] = 0
+MEM[S("SHOWS_DONE") + 1] = 0
 world(6)                                  # a dark house
 MEM[cm + 23 * 20 + 5] = 33
 run(cpu(), S("ARCH_SCAN"))
@@ -290,6 +348,31 @@ where, _ = drive(z, STOP_EXIT)
 chk(where == "exit" and MEM[S("GAME_LIVES")] == lives0 + 1,
     "twelve served, none wasted: the PERFECT SHIFT pays a life")
 
+for lane, y in ((0, 176), (1, 128), (2, 80)):
+    z = cpu()
+    z.a = lane
+    run(z, S("TP_LANEY"))
+    chk(z.a == y, f"counter {lane} stands at line {z.a}")
+
+for lane, y in ((0, 176), (1, 128), (2, 80)):   # EVERY counter serves
+    world(14)
+    z = cpu(S("MG_TAPPER"))
+    drive(z, {}, frames=90, brief=True)
+    g = slots(ET["RIOT"])[0]
+    MEM[ENT + g * ENT_SIZE + 9] = lane
+    MEM[ENT + g * ENT_SIZE + 2] = y
+    MEM[ENT + g * ENT_SIZE + 1] = 30
+    MEM[S("MG_A")] = lane             # the mechanic on that counter
+    MEM[S("MG_E")] = 0
+
+    def feed_serve(fr):
+        if fr == 3:
+            MEM[S("INPUT_NEW")] = INP_ACT
+
+    drive(z, {}, frames=60, feed=feed_serve)
+    chk(ent(g, 3) == 0xFF and MEM[S("MG_E")] == 1,
+        f"a tin served on counter {lane} turns its guard around")
+
 world(14)
 z = cpu(S("MG_TAPPER"))
 drive(z, {}, frames=70, brief=True)
@@ -315,6 +398,21 @@ MEM[S("WHIP_DIR")] = 0
 drive(z, {}, frames=3)
 chk(MEM[S("MG_E")] == 1 and MEM[tab12] == 0 and MEM[S("SFX_TYPE")] == 5,
     "the side crack takes the red rat: tally 1, the kill rings")
+def readout(col):                     # ink in a 7-seg berth
+    return sum(1 for yy in range(0, 8) for x in range(col, col + 7)
+               if MEM[0xC000 + LINE[yy] + x])
+
+
+MEM[S("DRAW_PAGE")] = 0xC0            # look at the buffer being drawn
+drive(z, {}, frames=2)
+one = readout(2)
+chk(one > 0, f"the tally is on the wall beside a rat ({one} ink)")
+MEM[S("MG_E")] = 11                   # a very different number...
+drive(z, {}, frames=2)
+chk(readout(2) != one, "...and it changes as the shift goes on")
+chk(readout(66) > 0, "...while the clock keeps its own berth")
+MEM[S("MG_E")] = 1
+
 MEM[tab12 + 2] = 60                   # the white one at hatch 1 (36,176)
 MEM[tab12 + 3] = 1
 MEM[S("PLAYER_X")] = 44
@@ -331,17 +429,94 @@ chk(where == "exit" and MEM[S("PLAYER_ENERGY")] == en0,
     "voided: the shift ends with no energy paid")
 
 # ======================================================================
+print("--- ESC walks out of any show, at any moment")
+for name, entry, when in (("the canteen", "MG_TAPPER", 30),
+                          ("the rat shift", "MG_MOLES", 60),
+                          ("the boiler", "MG_BOILER", 20),
+                          ("the firing line", "MG_FIRING", 90)):
+    world(11)
+    z = cpu(S(entry))
+    drive(z, {}, frames=when, brief=True)
+
+    def press_esc(fr):
+        MEM[S("KEY_MATRIX") + 8] = 0xFB     # ESC down (bit 2 low)
+
+    w, fr = drive(z, STOP_EXIT, frames=30, feed=press_esc)
+    MEM[S("KEY_MATRIX") + 8] = 0xFF
+    chk(w == "exit" and fr <= 3,
+        f"{name}: ESC leaves within {fr} frames")
+
+world(11)                                  # ...even on the briefing card
+z = cpu(S("MG_BOILER"))
+
+
+def esc_now(fr):
+    if fr >= 3:
+        MEM[S("KEY_MATRIX") + 8] = 0xFB
+
+
+stops = dict(STOP_EXIT)
+stops[S("MG_ROOM")] = "room"
+w, fr = drive(z, stops, feed=esc_now)
+MEM[S("KEY_MATRIX") + 8] = 0xFF
+chk(w == "exit", "...and out of the briefing card itself")
+
+# ======================================================================
+print("--- steady picture: no flicker, no debris left behind")
+
+
+def band(base, rows):
+    return {(x, y): MEM[base + LINE[y] + x] for y in rows for x in range(80)}
+
+
+def busy(fr):                         # a player who walks and whips
+    MEM[S("INPUT_HELD")] = (1 << 1) if (fr // 40) % 2 == 0 else 1
+    if fr % 25 == 0:
+        MEM[S("INPUT_NEW")] = 1 << 5
+
+ALL = list(range(200))
+for name, entry, quiet in (("the gallery", "MG_GALLERY", "MG_B"),
+                           ("the rat shift", "MG_MOLES", "MG_B")):
+    world(11)
+    z = cpu(S(entry))
+    drive(z, {}, frames=8, brief=True)
+    pristine = band(0xC000, ALL)
+    px0 = MEM[S("PLAYER_X")]
+    drive(z, {}, frames=500, feed=busy)
+    MEM[S(quiet)] = 250               # hold the hatches shut...
+    if entry == "MG_MOLES":
+        for i in range(0, 12, 2):
+            MEM[S("MG_TAB12") + i] = 1
+    MEM[S("PLAYER_X")] = px0          # ...put him back where he stood
+    drive(z, {}, frames=200)
+    chk(not [i for i in range(MAXE) if ent(i, 0)],
+        f"{name}: the field empties")
+    a_, b_ = band(0xC000, ALL), band(0x4000, ALL)
+    flick = [k for k in a_ if a_[k] != b_[k]]
+    chk(not flick,
+        f"{name}: both buffers agree byte for byte -- nothing flickers "
+        f"({len(flick)} differ)")
+    # (the mechanic himself is allowed to stand in a different stride)
+    dirt = [k for k in pristine if pristine[k] != a_[k] and k[1] >= 8
+            and not (px0 <= k[0] <= px0 + 3 and 176 <= k[1] < 192)]
+    chk(not dirt,
+        f"{name}: 500 frames of traffic leave the set exactly as built "
+        f"({len(dirt)} stale bytes)")
+
+# ======================================================================
 print("--- THE HOOK: the stake, the drop, the prize")
-world(9)
+world(13)
 z = cpu(S("MG_HOOK"))                 # score 0: the chain man refuses
 where, _ = drive(z, STOP_EXIT, brief=True)
 chk(where == "exit" and all(MEM[S("SCORE") + i] == 0 for i in range(4)),
     "with no 500 to stake, no game and nothing taken")
 world(9)
 MEM[S("SCORE") + 1] = 7               # 0700
+MEM[S("CURRENT_LEVEL")] = 13          # (not the free arcade)
 z = cpu(S("MG_HOOK"))
 drive(z, {}, frames=10, brief=True)
-chk(MEM[S("SCORE") + 1] == 2, "the stake of 500 is taken (0700 -> 0200)")
+chk(MEM[S("SCORE") + 1] == 6 and MEM[S("SCORE") + 2] == 5,
+    f"the stake of fifty is taken (0700 -> 0650)")
 h = slots(ET["MGSPR"])
 chk(bool(h), "the hook rides its rail")
 x0 = ent(h[0], 1)
@@ -429,6 +604,40 @@ z = cpu(S("MG_GALLERY"))
 drive(z, {}, frames=60, brief=True)
 d = slots(ET["DRONE"])
 chk(bool(d), "a decommissioned drone is released")
+
+# the range: targets FALL, they do not hunt
+i0 = d[0]
+MEM[ENT + i0 * ENT_SIZE + 1] = 20         # released far from the man
+MEM[ENT + i0 * ENT_SIZE + 2] = 40
+MEM[S("PLAYER_X")] = 60
+x0, y0 = ent(i0, 1), ent(i0, 2)
+drive(z, {}, frames=20)
+chk(ent(i0, 1) == x0,
+    f"the target holds its column ({x0} -> {ent(i0, 1)}): no homing")
+chk(ent(i0, 2) > y0 + 20,
+    f"...and comes straight down ({y0} -> {ent(i0, 2)})")
+MEM[ENT + i0 * ENT_SIZE + 2] = 182        # let it reach the deck
+drive(z, {}, frames=3)
+chk(ent(i0, 0) != ET["DRONE"] and MEM[S("PLAYER_ENERGY")] == 5,
+    "a target that lands is a spent dud -- it costs nothing")
+
+# ...while in the shaft itself the hunter still hunts
+MEM[S("MG_RANGE")] = 0
+free = slots(ET["NONE"])[0]
+MEM[ENT + free * ENT_SIZE + 0] = ET["DRONE"]
+MEM[ENT + free * ENT_SIZE + 1] = 20
+MEM[ENT + free * ENT_SIZE + 2] = 40
+MEM[S("PLAYER_X")] = 60
+drive(z, {}, frames=20)
+chk(ent(free, 1) > 20,
+    f"outside the range the drone still closes in ({ent(free, 1)})")
+MEM[ENT + free * ENT_SIZE + 0] = ET["NONE"]
+MEM[S("MG_RANGE")] = 1
+MEM[S("PLAYER_X")] = 38
+
+drive(z, {}, frames=45)
+d = slots(ET["DRONE"])
+chk(bool(d), "the range keeps releasing")
 i = d[0]
 MEM[ENT + i * ENT_SIZE + 1] = MEM[S("PLAYER_X")]
 MEM[ENT + i * ENT_SIZE + 2] = 150
@@ -436,6 +645,16 @@ MEM[S("WHIP_TIMER")] = 7
 MEM[S("WHIP_DIR")] = 1
 drive(z, {}, frames=3)
 chk(MEM[S("MG_E")] == 1, "the overhead crack counts a kill")
+MEM[S("DRAW_PAGE")] = 0xC0
+MEM[S("MG_E")] = 3
+drive(z, {}, frames=2)
+three = readout(2)
+chk(three > 0, f"the gallery counts its kills on the wall ({three} ink)")
+MEM[S("MG_E")] = 7
+drive(z, {}, frames=2)
+chk(readout(2) != three, "...and the figure tracks the tally")
+chk(readout(66) > 0, "...while the clock keeps its own berth")
+
 MEM[S("MG_E")] = 10                   # two past quota
 MEM[S("MG_SEC")] = 1
 MEM[S("MG_FR")] = 1
@@ -456,9 +675,23 @@ crud0 = MEM[S("MG_E")]
 MEM[S("MG_C")] = 0xFF                 # send it rising into the crust
 MEM[ENT + 1] = 30
 MEM[ENT + 2] = 39
-drive(z, {}, frames=2)
+drive(z, {}, frames=4)
 chk(MEM[S("MG_E")] == crud0 - 1 and MEM[S("MG_C")] == 1,
     "a rising pellet chips a scale tile and bounces back down")
+MEM[ENT + 1] = 30                     # how fast does it actually fly?
+MEM[ENT + 2] = 100
+MEM[S("MG_B")] = 1
+MEM[S("MG_C")] = 1
+x0 = MEM[ENT + 1]
+drive(z, {}, frames=20)
+travelled = MEM[ENT + 1] - x0
+chk(8 <= travelled <= 12,
+    f"the slag drifts about half a byte a frame ({travelled} in 20)")
+
+MEM[ENT + 1] = 30
+MEM[ENT + 2] = 39
+MEM[S("MG_C")] = 0xFF
+drive(z, {}, frames=4)
 cell = S("LEVEL_BUFFER") + 6 + 4 * 20 + 8   # it stepped once first
 chk(MEM[cell] == 0, "...the tile is gone from the map itself")
 MEM[ENT + 1] = MEM[S("PLAYER_X")]     # the overhead return
@@ -466,12 +699,12 @@ MEM[ENT + 2] = 166
 MEM[S("MG_C")] = 1
 MEM[S("WHIP_TIMER")] = 7
 MEM[S("WHIP_DIR")] = 1
-drive(z, {}, frames=3)
+drive(z, {}, frames=4)
 chk(MEM[S("MG_C")] == 0xFF, "the overhead crack bats it skyward")
 for _ in range(2):                    # two splashes...
     MEM[ENT + 2] = 179
     MEM[S("MG_C")] = 1
-    drive(z, STOP_EXIT, frames=8)
+    drive(z, STOP_EXIT, frames=12)
 MEM[ENT + 2] = 179                    # ...and the third fouls it
 MEM[S("MG_C")] = 1
 r = drive(z, STOP_EXIT)
@@ -494,6 +727,50 @@ lives0 = MEM[S("GAME_LIVES")]
 where, _ = drive(z, STOP_EXIT)
 chk(where == "exit" and MEM[S("GAME_LIVES")] == lives0 + 1,
     "an unmarked decoy is paid a whole life")
+
+# nobody dies at drill: a round marks the card, it does not wound
+world(13)
+MEM[S("PLAYER_ENERGY")] = 1           # one point from a lost life
+MEM[S("GAME_LIVES")] = 1              # ...and one life from the end
+z = cpu(S("MG_FIRING"))
+drive(z, {}, frames=5, brief=True)
+free = slots(ET["NONE"])[0]
+for _ in range(4):                    # four rounds straight into him
+    MEM[ENT + free * ENT_SIZE + 0] = ET["BULLET"]
+    MEM[ENT + free * ENT_SIZE + 1] = (MEM[S("PLAYER_X")] - 1) & 0xFF
+    MEM[ENT + free * ENT_SIZE + 2] = 181
+    MEM[ENT + free * ENT_SIZE + 3] = 1
+    MEM[ENT + free * ENT_SIZE + 7] = 0
+    MEM[S("IMMUNE_TIMER")] = 0
+    drive(z, {}, frames=3)
+chk(MEM[S("PLAYER_ENERGY")] == 1 and MEM[S("GAME_LIVES")] == 1,
+    "four hits at one energy and one life: neither is touched")
+chk(MEM[S("MG_F")] == 1, "...but the card is marked")
+MEM[S("MG_SEC")] = 1
+MEM[S("MG_FR")] = 1
+where, _ = drive(z, STOP_EXIT)
+chk(where == "exit" and MEM[S("GAME_LIVES")] == 1
+    and MEM[S("PLAYER_ENERGY")] == 2,
+    "a marked sheet pays hazard pay instead of a life")
+
+# ...while a round in the shaft still wounds
+world(13)
+MEM[S("MG_DRILL")] = 0
+MEM[S("PLAYER_X")] = 40
+MEM[S("PLAYER_Y")] = 176
+MEM[S("PLAYER_DUCK")] = 0
+MEM[S("IMMUNE_TIMER")] = 0
+for i in range(MAXE):
+    MEM[ENT + i * ENT_SIZE] = 0
+ent0 = 0
+MEM[ENT + 0] = ET["BULLET"]
+MEM[ENT + 1] = 39
+MEM[ENT + 2] = 181
+MEM[ENT + 3] = 1
+en0 = MEM[S("PLAYER_ENERGY")]
+run(cpu(), S("UPDATE_ENTITIES"))
+chk(MEM[S("PLAYER_ENERGY")] == en0 - 1,
+    "outside the drill a bullet still costs an energy point")
 
 # ======================================================================
 print("--- the way home")
