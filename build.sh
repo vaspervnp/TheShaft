@@ -42,6 +42,10 @@ python3 tools/verify_menu.py
 # double doors' catchment, LVL in front of the HUD's number.
 python3 tools/verify_lift.py
 
+# ...and the seven mini-games behind the background arches: entry,
+# each show's rules driven with scripted keys, and the way home.
+python3 tools/verify_minigames.py
+
 # BASIC loader: AMSDOS ASCII wants CR/LF line ends and a ^Z EOF marker.
 awk '{printf "%s\r\n", $0}' src/shaft.bas > build/shaft.bas
 printf '\032' >> build/shaft.bas

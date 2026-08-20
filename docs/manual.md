@@ -187,15 +187,15 @@ when it lands. Anyone caught in the crack goes down.
 
 The whip can also be aimed: hold `↑` as you crack for a strike straight
 overhead, or `↑` and a direction for a rising diagonal. Debris cannot be
-whipped out of the air — but a **drone** can, and the overhead and
-diagonal cracks are the only things that reach one.
+whipped out of the air — but a **drone** can: any crack that reaches it
+brings it down, and the overhead one reaches furthest.
 
 | | Who | Behaviour |
 |---|---|---|
 | **RIOT GUARD** | Company security, visored, shielded | Patrols his walkway. Slow — he moves one step in four. You can outrun him, and outrunning him is often cheaper than fighting |
 | **COAT MAN** | Long coat, dark glasses, crowbar | Patrols twice as fast as a guard. Duck his swing and answer with the whip |
 | **THROWER** | Perched above the walkway | Drops rubble on the deck below on a timer. He will not come down. Duck the rock, or cross when his arms are empty |
-| **SECURITY DRONE** | A rotored charge with one red eye | From level 20. Appears without warning, homes on you, and **detonates on contact** — one energy point. Walk away from it, or bring it down with the overhead or diagonal whip. The side crack passes under it |
+| **SECURITY DRONE** | A rotored charge with one red eye | From level 20. Appears without warning, homes on you, and **detonates on contact** — one energy point. Walk away from it, or bring it down with the whip: overhead while it is still high, diagonal as it closes, or the plain side crack once it has dropped to arm height |
 
 **From level 10, the riot guards start shooting.** At first only one
 gun per level; one more every few levels, until every guard on every
@@ -244,6 +244,29 @@ The elevator will only take you to stops **you have already reached on
 foot**. It is a shortcut back through the Shaft, not a way to skip it.
 Once you have climbed to level 40 the hard way, the lift will carry you
 back down to level 10 to fetch that yellow card you left behind.
+
+---
+
+## THE SIDE CORRIDORS
+
+Most of the great arched doorways in the background are just
+doorways. **Fourteen of them are marked — a pulsing arrow burns over
+the arch.** Stand at a marked one and press `↑`, and whatever runs
+behind it takes the screen: a ration counter to hold, a pest detail,
+a rigged salvage crane, a smuggler's handoff, a drone range, a fouled
+boiler, a firing drill. Seven side attractions play the shaft, each
+at two marquees — one low, one high — and each door plays you **once
+per visit**. Leave the level and come back to try again; when the
+arrow is dark, the show has run.
+
+Every one of them opens with a **briefing card**: the name of the job
+and the two rules that matter. Read it and press `SPACE` — or stand
+there thinking about it, and it starts on its own after ten seconds.
+
+They pay in energy, in score, and now and then — a perfect shift, a
+clean sheet, a lucky hook — in a whole life. They never pay in
+keycards. Some want a stake on the table first: the crane asks 500
+points, and the house did not build it to lose.
 
 ---
 

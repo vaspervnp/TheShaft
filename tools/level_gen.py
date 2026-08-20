@@ -461,7 +461,7 @@ PLAT_ROWS = (18, 12, 6)                 # platform slab rows, bottom-up
 def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
               cross_colors=(), spare_colors=(), local_colors=(),
               switch_ids=(), vault_ids=(), below_vault_ids=(),
-              obstacle=False, down_hole=False):
+              obstacle=False, down_hole=False, arch_needed=False):
     """Build one screen around the fixed climb skeleton.  Returns
     (map lines, plan); raises AssertionError when a layout constraint
     cannot be met (the caller simply retries with fresh randomness)."""
@@ -748,6 +748,7 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
     # background corridor mouths: scenic depth, purely decorative.
     # Two tiles wide and FOUR tall -- a doorway that dwarfs the
     # climber, filling the corridor from deck to almost-ceiling.
+    arches = 0
     for _ in range(rng.randrange(1, 3)):
         for _ in range(40):
             p = rng.randrange(-1, 3)
@@ -766,7 +767,11 @@ def gen_level(rng, zone, entry_col, difficulty, elevator=False, medkit=False,
                     (('a', 'e'), ('c', 'q'), ('o', 's'), ('A', 'B'))):
                 grid[top + rr][c] = lch
                 grid[top + rr][c + 1] = rch
+            arches += 1
             break
+    # a marquee level must get its doorway -- fail loudly and let the
+    # caller reroll, never ship a show with no entrance
+    assert arches or not arch_needed, "no room for the show's doorway"
 
     # a pipe out of one wall, along a ceiling, elbow, and down into
     # the deck below -- scenic plumbing with corners
@@ -1075,6 +1080,8 @@ def generate_all():
             idx += 1
             has_elev = (idx % 10 == 0)   # lift stops: 10, 20, 30, 40, 50
             has_med = (idx >= 20 and idx % 9 == 2)  # meds: level 20 up
+            # the fourteen marquee levels MUST get their doorway
+            has_show = (5 <= idx <= 57 and (idx - 5) % 4 == 0)
             obst_next -= 1
             has_obst = obst_next <= 0               # ducts: every 4-7
             spare_n = (rng.random() < (0.15, 0.35, 0.55)[zone]) + \
@@ -1151,7 +1158,8 @@ def generate_all():
                                          cross, spares, local_cols,
                                          sow_switch, vids, below_vids,
                                          obstacle=has_obst,
-                                         down_hole=(idx >= 3))
+                                         down_hole=(idx >= 3),
+                                         arch_needed=has_show)
                     verify(lv, plan, exit_col, f"L{idx}", inv_try, prs_try)
                     break
                 except AssertionError:

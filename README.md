@@ -76,8 +76,9 @@ harnesses over it and `build.sh` two more:
 | `verify_demo_timeline.py` | the real main loop from `start:`: a 15-frame beat inside every movement stretch, alternating neighbours, zero strikes at rest |
 | `verify_music.py` | the game's title theme, executed: both voices lock a 768-frame (15 s) loop, the register stream matches an independent model write for write, the bass volume reaches R10 (not R11, where the first player sent it), and the mixer keeps the keyboard alive |
 | `verify_steps.py` | the mechanic's movement sounds, in game_loop's real frame order: a click every 5 walking frames and a metallic rung tick at the same cadence on ladders, each closing in 20 ms; silence when standing, resting on the rails, or airborne (air control sets `player_moved` and falling changes `player_y` — both traps are tested); and priority both ways: a boot never clips a ringing effect, a fresh effect replaces a boot at once |
-| `verify_enemies.py` | the rifle ramp level by level (0 rifles at 9, one at 10, all by 42 — and never a coat man); when a guard pulls the trigger (his walkway, his facing, never point-blank); the bullet frame by frame — it finds a standing chest, passes over a DUCKED head and under a jumper, dies on crates and walls; the drone's homing, its detonation (harmless through the immunity flicker, but it still goes off), the dispatcher's odds and 1→3 ceiling by level and its silence below 20; the whip killing a flyer with the overhead and diagonal cracks but never the side one; and that `check_enemy_hit` leaves both new types to judge their own contact |
+| `verify_enemies.py` | the rifle ramp level by level (0 rifles at 9, one at 10, all by 42 — and never a coat man); when a guard pulls the trigger (his walkway, his facing, never point-blank); the bullet frame by frame — it finds a standing chest, passes over a DUCKED head and under a jumper, dies on crates and walls; the drone's homing, its detonation (harmless through the immunity flicker, but it still goes off), the dispatcher's odds and 1→3 ceiling by level and its silence below 20; the whip killing a flyer with any crack whose rope reaches it — overhead, diagonal, or the side crack at arm height, while one still overhead escapes the side rope; and that `check_enemy_hit` leaves both new types to judge their own contact |
 | `verify_menu.py` | the attract pages, executed: both sides land identically in both buffers, all 11 exhibit rows carry a picture and caption, and the exhibits leave lines 120–127 black for the blinking prompt |
+| `verify_minigames.py` | the seven arch mini-games, executed with scripted keys and faked time only: the doorway scan and the marquee bill; every briefing card measured — title, both rules and the prompt inked in *both* buffers, and each string proven to fit its font's width; Space dismissing the card and the ten-second auto-start; the Canteen's serve/report/perfect-shift paths; Pest Detail's red kill and white-rat void; the Hook's stake, refusal and prize; the Black Market's catch, telegraph and the coat man's ending pass; the Gallery's kill count and payout; the Boiler's chip/return/foul; the Firing Line's two salvo heights and the clean-sheet life; and the reload home |
 | `verify_lift.py` | the lift's LED floor readout decoded back OFF THE SCREEN, segment for segment, for four different stops; not a pixel on lift-less levels; the double doors' 8-byte catchment probed player-position by player-position; and the HUD's LVL label static while the number tracks the level |
 
 The second one exists because it was missing: the first verifier only
@@ -112,7 +113,7 @@ copied it.
 
 ## Editing the sprites
 
-All 22 sprite frames are exported as ordinary PNGs in
+All 25 sprite frames are exported as ordinary PNGs in
 [art/sprites/](art/sprites/), with the 16 CPC pens as an editor
 palette ([art/cpc-pens.gpl](art/cpc-pens.gpl)). Edit them in any pixel
 editor — [art/README.md](art/README.md) has the workflow, the rules
@@ -275,7 +276,7 @@ a rock-steady screen throughout.
 | `update_player` | The physics state machine: GROUND / CLIMB / AIR. 8.8 fixed-point vertical velocity (`player_yfrac`+`player_y` read as one word), gravity with terminal velocity capped below one tile so falls can't tunnel |
 | `is_supported` | "Can I stand here?": a solid under the feet, or feet exactly at a ladder's through-hole (`ladder.y+16`, from the head-room convention). The raw ladder bit deliberately doesn't count — that would let you stand on air beside a ladder |
 | `start_jump` / `start_fall` | Enter AIR with `JUMP_VY` or from rest; both arm the apex tracker that feeds the fall-height hook (`last_fall`) for future damage |
-| `update_drones` / `riot_fire` | The escalation: from level 10 riot guards carry rifles (the first, then one more every 8 levels, until all) — `riot_fire` shoots only at walkway height, on the facing side, never point-blank, and the round flies at gun height where a **duck** (or a jump) clears it. From level 20 `update_drones` sometimes launches a kamikaze drone (odds and 1–3 ceiling climb with the level, LFSR-seeded from the 300 Hz clock) that homes on the player and detonates for one energy — the **overhead or diagonal whip** brings it down; the side crack passes under it |
+| `update_drones` / `riot_fire` | The escalation: from level 10 riot guards carry rifles (the first, then one more every 8 levels, until all) — `riot_fire` shoots only at walkway height, on the facing side, never point-blank, and the round flies at gun height where a **duck** (or a jump) clears it. From level 20 `update_drones` sometimes launches a kamikaze drone (odds and 1–3 ceiling climb with the level, LFSR-seeded from the 300 Hz clock) that homes on the player and detonates for one energy — any whip crack that reaches it brings it down: overhead while high, side once it drops to arm height |
 | `copy_levels_to_bank` / `load_level` | The 128K: all level blobs live in extra-RAM bank 4 (`#C4` over `#4000-#7FFF`, video unaffected); entering a level copies one blob into a writable main-RAM buffer |
 | `next_level` / `enter_level` | Flip-screen climb: y<8 → next level from the bank, player re-enters at the floor keeping X (exit and entry ladders share a column, checked by the generator) |
 | `check_keycards` / `check_doors` | Keycards are tiles (edited out of map RAM, re-blitted on both buffers); doors are SOLID\|DOOR rects + tiles — push with a card to delete both |
@@ -313,7 +314,7 @@ it; `_r` looks right, `_l` is the tool-mirrored copy.
 | ![](docs/gfx/spr_drips.png) | Drips `spr_drip_red`/`_white` | 1 each | 5 / 1 | Lubricant from leaky ceiling pipes, falling 2 lines/frame. **Red hurts, white is water** — read the stain on the pipe |
 | ![](docs/gfx/spr_steam.png) | Steam `spr_steam_a`/`_b` | 2 | 1, 10 | A vent's blast: a standing 16-line column, flickering fast, lethal to touch for ~45 frames. Vent clocks run off the 300 Hz interrupt counter |
 | ![](art/sprites/spr_bullet.png) | Bullet `spr_bullet` | 1 | 1 | A riot guard's tracer round (level 10 up): flies at gun height, 1 byte/frame — duck under it, jump over it, or eat one energy point |
-| ![](art/sprites/spr_drone_a.png) | Drone `spr_drone_a`/`_b` | 2 | 1, 2, 3, 5 | The kamikaze flyer (level 20 up): rotor-blur frames alternate every 2 ticks; homes on the player and detonates on contact for one energy. Only the overhead or diagonal whip reaches it |
+| ![](art/sprites/spr_drone_a.png) | Drone `spr_drone_a`/`_b` | 2 | 1, 2, 3, 5 | The kamikaze flyer (level 20 up): rotor-blur frames alternate every 2 ticks; homes on the player and detonates on contact for one energy. Any whip aim that reaches it kills it — the overhead reaches furthest |
 | | Whip rope | drawn, not stored | 7 | Not a sprite: `fill_rect` segments — a side line, a vertical line, or stepped 1×2 diagonal pieces, per the aim |
 
 ### Background tiles — 8×8 px opaque (4 bytes × 8 lines, raw, 32 bytes each)
@@ -414,14 +415,26 @@ buffer **two** frames ago, not last frame's. The engine keeps one previous
    generated Z80 routine at `#8000` that draws itself — opaque bytes
    cost 10 T instead of 38, empty rows cost nothing, and the
    masked-data blobs left the main bank entirely *(done)*
-8. ~~Escalation~~ — from level 10 the riot guards start **shooting**:
+8. ~~The arcades~~ — **fourteen marked doorways** (levels 5, 9 … 57,
+   a pulsing arrow burning over the arch): stand at one, press Up, and
+   one of **seven mini-games** takes the screen — after a briefing
+   card naming the job and its two rules — each playing at two
+   marquees, one low and one high: the Canteen (Tapper), Pest Detail
+   (whack-a-mole by whip aim), the Hook (a rigged claw machine staked
+   with score), the Black Market (catch under a drip-telegraphed
+   surveillance eye), the Drone Gallery, the Boiler (Breakout with the
+   overhead whip) and the Firing Line. Rewards are energy, score and
+   the odd hard-earned life — never keycards. All module code lives on
+   the `#A600` shelf; the code bank paid only for the doorway
+   machinery. See [docs/minigames.md](docs/minigames.md) *(done)*
+9. ~~Escalation~~ — from level 10 the riot guards start **shooting**:
    the first carries a rifle, one more every 8 levels, until all do;
    the round flies at gun height, so a duck (or a jump) clears it.
    From level 20 the shaft dispatches **kamikaze drones** — rare at
    first, up to three aloft near the top, LFSR-random, homing, one
-   energy point on detonation, and only the overhead or diagonal whip
-   brings one down. Plus the title screen's **attract loop**: every
+   energy point on detonation, and any whip crack that reaches one
+   brings it down (the overhead reaches furthest). Plus the title screen's **attract loop**: every
    5 seconds the menu swaps with a KNOW YOUR SHAFT exhibits page —
    eleven objects, each with its picture — and Space starts the game
    from either side *(done)*
-9. Next: more zones? boss floors? your move
+10. Next: more zones? boss floors? your move

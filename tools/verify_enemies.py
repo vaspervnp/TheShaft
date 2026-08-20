@@ -10,10 +10,11 @@ where a DUCK (or a jump) clears it, and it dies on walls and slabs.
 Drones: from level 20 a dispatcher sometimes launches a kamikaze that
 homes on the player and detonates on contact for one energy point --
 even through the immunity flicker it still detonates, just harmlessly.
-The odds and the ceiling (1..3 aloft) climb with the level.  The whip
-kills it with the OVERHEAD or DIAGONAL crack only; the side crack
-passes under it.  check_enemy_hit ignores both new types -- they judge
-their own contact."""
+The odds and the ceiling (1..3 aloft) climb with the level.  Any whip
+crack that geometrically reaches it kills it: the overhead and the
+diagonal, and the side crack once it has dropped to arm height (a
+flyer still overhead escapes the side rope).  check_enemy_hit ignores
+both new types -- they judge their own contact."""
 import sys
 
 sys.path.insert(0, "tools")
@@ -224,7 +225,7 @@ chk(bool(sp) and all(8 <= r[1] <= 71 and r[2] == 8 for r in sp),
     "a launch appears along the open top strip, under the ceiling")
 
 # ======================================================================
-print("--- the whip against the flyer (and not the side crack)")
+print("--- the whip against the flyer: any aim the rope can reach")
 
 
 def crack(wdir, dx=0, dy=-14, facing=0):
@@ -241,8 +242,10 @@ chk(crack(1) == ET_DYING and MEM[S("SFX_TYPE")] == SFX_KILL,
     "the OVERHEAD crack brings it down (and the kill sound plays)")
 chk(crack(2, dx=3, dy=-10) == ET_DYING,
     "so does the rising DIAGONAL")
-chk(crack(0) == ET_DRONE,
-    "the SIDE crack passes under a flyer -- it survives")
+chk(crack(0, dx=4, dy=-6) == ET_DYING,
+    "...and the SIDE crack too, once it has dropped to arm height")
+chk(crack(0, dx=4, dy=-14) == ET_DRONE,
+    "but the side rope stays at arm height: one still overhead escapes")
 world(40, 160)
 MEM[S("PLAYER_FACING")] = 0
 ent(0, ET_RIOT, x=44, y=160, dir=1, spd=1)
@@ -292,10 +295,13 @@ fr, en, sfx, sc = crack_chain()
 chk(fr is not None and en == 4 and sfx == SFX_HIT and sc == 0,
     f"no whip: the same drone detonates on him at frame {fr} for one "
     f"energy -- the danger is real")
+fr, en, sfx, sc = crack_chain(press=INP_ACT, drone=(47, 170))
+chk(fr is not None and fr <= 6 and en == 5 and sc == 1,
+    f"the SIDE crack takes one diving in at body height (frame {fr})")
 fr, en, sfx, sc = crack_chain(press=INP_ACT)
 chk(fr is not None and en == 4 and sc == 0,
-    f"the SIDE crack (no aim) never touches it: it still detonates "
-    f"(frame {fr}) -- aim upward, as the manual says")
+    f"...but fired at one still high overhead it whiffs -- detonation "
+    f"at frame {fr}: the overhead aim remains the safe answer")
 
 # ======================================================================
 print("--- contact bookkeeping stays with the specialists")

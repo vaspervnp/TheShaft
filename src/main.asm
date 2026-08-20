@@ -137,6 +137,8 @@ ET_DRIP         equ 6           ; falling lubricant (colour in +9)
 ET_STEAM        equ 7           ; a vent's blast: a standing column
 ET_BULLET       equ 8           ; a rifle round at gun height
 ET_DRONE        equ 9           ; kamikaze flyer, homing on the player
+ET_MGSPR        equ 10          ; mini-game prop: sprite from (mg_spr),
+                                ; moved by the show's own loop only
 BULLET_LVL      equ 10          ; guards start shooting at this level
 DRONE_LVL       equ 20          ; ...and the drone dispatch wakes here
 RIOT_RELOAD     equ 140         ; frames between a guard's shots
@@ -172,6 +174,10 @@ SFX_STEP        equ 6
 SFX_RUNG        equ 7
 
 STEP_FRAMES     equ 5           ; a footfall every 5 frames of walking
+
+; The mini-games behind the background arches (docs/minigames.md)
+TILE_ARCH_FOOT  equ 33          ; arch4l: the doorway's bottom-left
+MG_COUNT        equ 7           ; how many shows tour the shaft
 
         org #1000
 
@@ -284,6 +290,7 @@ gl_no_fdesc:
         or a
         call nz,take_fall_hit
         call check_elevator     ; standing at a lift door + Up/Down?
+        call check_arch         ; ...or at a background doorway + Up?
         call update_entities    ; patrols, throwers, falling debris
         ld a,(whip_timer)      ; the thong out at full stretch? resolve
         cp WHIP_TIME-4         ; the crack against the just-moved foes
@@ -298,9 +305,10 @@ gl_no_fdesc:
         call render_entities    ; restore tiles, draw everyone + rope
         call draw_hud           ; keycards (left) and lives (right)
         call draw_lift_panel    ; the LED floor readout over the lift
+        call draw_arch_sign     ; the marquee arrow over live doorways
         ld hl,frame_ctr
         inc (hl)
-        jr game_loop
+        jp game_loop
 
 ; ======================================================================
 ; frame_sync -- synchronise to the frame flyback (VBLANK)
@@ -1719,6 +1727,9 @@ ll_pal:
         ld hl,(level_buffer)    ; header +0: rects offset
         add hl,de
         ld (current_rects),hl
+        push de
+        call arch_scan          ; find the background doorways
+        pop de
         ld hl,(level_buffer+2)  ; header +2: enemy list offset
         add hl,de
         ; --- unpack enemy spawns into the runtime pool
@@ -3241,6 +3252,375 @@ sd_found:
         ld (iy+7),0
         ret
 
+; ======================================================================
+;   THE MINI-GAMES -- behind the background arches (docs/minigames.md)
+;
+; Every level carries one or two decorative corridor mouths; from now
+; on they are doors.  Stand at one, press UP, and a side attraction
+; takes the screen; when it ends you are back where you stood.  The
+; game code itself lives on the #A600 shelf -- only this doorway
+; machinery spends code-bank bytes.
+; ======================================================================
+
+; arch_scan -- called by load_level: find up to two arch4l tiles in
+; the map and record each doorway's byte column and standing y.
+arch_scan:
+        xor a
+        ld (mg_flag),a          ; a fresh level re-arms the doors
+        ld (arch_count),a
+        ld hl,(current_map)
+        ld c,0                  ; C = map row
+as_row:
+        ld b,0                  ; B = map column
+as_col:
+        ld a,(hl)
+        cp TILE_ARCH_FOOT
+        call z,as_found
+        inc hl
+        inc b
+        ld a,b
+        cp 20
+        jr c,as_col
+        inc c
+        ld a,c
+        cp 25
+        jr c,as_row
+        ret
+as_found:
+        push hl
+        push bc
+        ld a,(arch_count)
+        cp 2
+        jr nc,as_full
+        ld hl,arch_tab
+        or a
+        jr z,as_slot
+        inc hl
+        inc hl
+as_slot:
+        ld a,b                  ; the doorway's left byte column
+        add a,a
+        add a,a
+        ld (hl),a
+        inc hl
+        ld a,c                  ; standing y on its deck: row*8 - 8
+        add a,a
+        add a,a
+        add a,a
+        sub 8
+        ld (hl),a
+        ld hl,arch_count
+        inc (hl)
+as_full:
+        pop bc
+        pop hl
+        ret
+
+; check_arch -- standing at a doorway with UP freshly pressed?  Then
+; the level number decides which show is playing behind it.
+; mg_bill -- what plays on this level: 0-6, or #FF for a dark house.
+; Fourteen marquee levels -- 5, 9, 13 ... 57 -- host the seven shows
+; twice each, spread up the whole shaft.
+mg_bill:
+        ld a,(current_level)
+        sub 5
+        jr c,mgb_no
+        cp 53
+        jr nc,mgb_no
+        ld b,a
+        and 3
+        jr nz,mgb_no
+        ld a,b
+        srl a
+        srl a                   ; (level-5)/4 = marquee 0..13
+mgb_m:
+        sub MG_COUNT
+        jr nc,mgb_m
+        add a,MG_COUNT
+        ret
+mgb_no:
+        ld a,#FF
+        ret
+
+check_arch:
+        call mg_bill
+        inc a
+        ret z                   ; a dark house: the arch is scenery
+        ld a,(mg_flag)
+        or a
+        ret nz                  ; one show per visit to the level
+        ld a,(player_state)
+        or a
+        ret nz                  ; on his feet, not climbing or flying
+        ld a,(input_new)
+        bit INP_UP,a
+        ret z
+        ld a,(arch_count)
+        or a
+        ret z
+        ld b,a
+        ld hl,arch_tab
+ca_loop:
+        ld a,(player_y)
+        inc hl
+        cp (hl)                 ; his deck?
+        dec hl
+        jr nz,ca_next
+        ld a,(player_x)
+        sub (hl)
+        add a,2                 ; body overlap with the 8-byte doorway
+        cp 9
+        jr c,mg_enter
+ca_next:
+        inc hl
+        inc hl
+        djnz ca_loop
+        ret
+
+mg_enter:
+        ld a,1
+        ld (mg_flag),a
+        ld a,(player_x)
+        ld (mg_ret_x),a
+        ld a,(player_y)
+        ld (mg_ret_y),a
+        call sfx_silence
+        ld a,SFX_PING           ; the door answers
+        call sfx_start
+        call mg_bill            ; (check_arch already proved it valid)
+        ld (mg_game),a
+        add a,a
+        ld hl,mg_table          ; (on the shelf, with the games)
+        add a,l
+        ld l,a
+        jr nc,$+3
+        inc h
+        ld a,(hl)
+        inc hl
+        ld h,(hl)
+        ld l,a
+        jp (hl)                 ; the show takes the stage
+
+; draw_arch_sign -- the marquee: a pulsing arrow over every doorway
+; with a show behind it, resting once the show has run this visit.
+draw_arch_sign:
+        ld a,(mg_flag)
+        or a
+        ret nz
+        call mg_bill
+        inc a
+        ret z
+        ld a,(arch_count)
+        or a
+        ret z
+        ld b,a
+        ld hl,arch_tab
+das_l:
+        push bc
+        push hl
+        ld a,(hl)
+        add a,2                 ; centred over the 8-byte doorway
+        ld b,a
+        inc hl
+        ld a,(hl)
+        sub 24                  ; just above the arch's crown
+        ld c,a
+        ld a,(frame_ctr)
+        and 16
+        ld e,7                  ; the marquee pulses yellow...
+        jr z,das_p
+        ld e,6                  ; ...and orange
+das_p:
+        ld a,GLYPH_UP
+        call draw_char
+        pop hl
+        pop bc
+        inc hl
+        inc hl
+        djnz das_l
+        ret
+
+; mg_exit -- every show ends here: back to the shaft, same spot.
+mg_exit:
+        ld a,(mg_ret_x)
+        ld (player_x),a
+        ld a,(mg_ret_y)
+        ld (entry_y),a
+        ld a,(current_level)
+        call load_level
+        ld a,1                  ; the door stays spent until the level
+        ld (mg_flag),a          ; is truly left (load_level cleared it)
+        jp enter_level
+
+; ----------------------------------------------------------------------
+; mg_room -- build a show's set.  HL -> room record:
+;   player_x, player_y, floor tile,
+;   (tile, col, row, run)*  #FF,
+;   (x, w, y, h, type)*     #FF        -- the collision rects
+; The map is wiped into the level buffer, rects copied after it, both
+; screens redrawn, the entity pool and every prev slot cleared.
+; ----------------------------------------------------------------------
+mg_room:
+        ld a,(hl)
+        inc hl
+        ld (player_x),a
+        ld a,(hl)
+        inc hl
+        ld (player_y),a
+        push hl
+        ld hl,(current_map)     ; wipe the whole 20x25 map
+        ld d,h
+        ld e,l
+        inc de
+        ld (hl),0
+        ld bc,499
+        ldir
+        pop hl
+        ld a,(hl)               ; lay the floor, row 24
+        inc hl
+        push hl
+        ld hl,(current_map)
+        ld de,480
+        add hl,de
+        ld b,20
+mr_floor:
+        ld (hl),a
+        inc hl
+        djnz mr_floor
+        pop hl
+mr_prop:
+        ld a,(hl)               ; the props, run by run
+        inc hl
+        cp #FF
+        jr z,mr_rects
+        ld c,a
+        ld e,(hl)               ; col
+        inc hl
+        ld d,(hl)               ; row
+        inc hl
+        ld b,(hl)               ; run length, rightwards
+        inc hl
+        push hl
+        ld a,d                  ; map + row*20 + col
+        add a,a
+        add a,a
+        add a,d                 ; row*5
+        ld l,a
+        ld h,0
+        add hl,hl
+        add hl,hl               ; row*20
+        ld d,0
+        add hl,de
+        ld de,(current_map)
+        add hl,de
+mr_run:
+        ld (hl),c
+        inc hl
+        djnz mr_run
+        pop hl
+        jr mr_prop
+mr_rects:
+        ld de,(current_rects)
+mr_rc:
+        ld a,(hl)
+        ld (de),a
+        inc hl
+        inc de
+        cp #FF
+        jr nz,mr_rc
+        ; --- physics reset, both screens painted, pool drained
+        xor a
+        ld (player_yfrac),a
+        ld (player_duck),a
+        ld (whip_timer),a
+        ld (immune_timer),a
+        ld (slide_timer),a      ; no slide carried through a door
+        ld (slide_lock),a
+        ld (hint_glyph),a       ; no vault arrows over a stage
+        ld h,a
+        ld l,a
+        ld (player_vy),hl
+        ld a,ST_GROUND
+        ld (player_state),a
+        ld a,(player_x)
+        ld (prev_pos),a
+        ld (prev_pos+2),a
+        ld a,(player_y)
+        ld (prev_pos+1),a
+        ld (prev_pos+3),a
+        ld ix,entities
+        ld b,MAX_ENTITIES
+mr_pool:
+        ld (ix+0),ET_NONE
+        ld de,ENT_SIZE
+        add ix,de
+        djnz mr_pool
+        ld a,SCREEN_B/256
+        ld (draw_page),a
+        call draw_tilemap
+        ld a,SCREEN_A/256
+        ld (draw_page),a
+        jp draw_tilemap
+
+; mg_frame -- the shared per-frame head of every show's loop
+mg_frame:
+        call frame_sync
+        call flip_buffers
+        call read_input
+        ld hl,frame_ctr         ; the walk animations and the guards'
+        inc (hl)                ; step gates all count this
+        jp sfx_update
+
+; add_energy -- A points; past a full tank they bank a life (cap 9)
+add_energy:
+        ld hl,player_energy
+        add a,(hl)
+        cp ENERGY_MAX+1
+        jr c,ae_fits
+        sub ENERGY_MAX
+        ld b,a
+        ld a,(game_lives)
+        cp 9
+        jr c,ae_bank
+        ld (hl),ENERGY_MAX      ; nine lives already: the tank tops
+        ret                     ; out and the spill is lost -- never
+ae_bank:                        ; wrapped into a near-empty tank
+        inc a
+        ld (game_lives),a
+        ld a,b
+ae_fits:
+        ld (hl),a
+        ret
+
+; mg_verdict -- HL = the closing line; hold it up, then leave.
+mg_verdict:
+        push hl
+        ld b,90                 ; a settling breath
+mv_wait:
+        push bc
+        call mg_frame
+        pop bc
+        djnz mv_wait
+        pop hl
+        push hl
+        ld b,4                  ; into the hidden buffer...
+        ld c,96
+        ld e,7
+        call draw_text_narrow
+        call mg_frame           ; ...flip it into view...
+        pop hl
+        ld b,4                  ; ...and match the other one
+        ld c,96
+        ld e,7
+        call draw_text_narrow
+        ld b,150                ; three seconds to read it
+mv_hold:
+        push bc
+        call mg_frame
+        pop bc
+        djnz mv_hold
+        jp mg_exit
+
 ; rnd8 -- 8-bit Galois LFSR (poly #1D), period 255.  Seeded per level
 ; from the 300 Hz clock, so no two runs share a sky.  Trashes only A.
 rnd8:
@@ -3482,13 +3862,8 @@ wh_loop:
         or a
         jr z,wh_next
         cp ET_DRONE
-        jr nz,wh_person
-        ld a,(whip_dir)         ; a flyer: only the overhead and
-        or a                    ; diagonal cracks reach that high
-        jr z,wh_next
-        jr wh_test
-wh_person:
-        cp ET_PROJ
+        jr z,wh_test            ; a flyer: ANY crack that reaches it --
+        cp ET_PROJ              ; the box geometry alone decides
         jr nc,wh_next           ; otherwise only people can be snared
 wh_test:
         ld a,(ix+1)             ; X overlap with the box
@@ -3861,6 +4236,8 @@ entity_sprite:
         jr z,es_bullet
         cp ET_DRONE
         jr z,es_drone
+        cp ET_MGSPR
+        jr z,es_mg
         cp ET_PROJ
         jr z,es_rock
         cp ET_DRIP
@@ -3880,6 +4257,9 @@ es_rock:
         ret
 es_bullet:
         ld de,spr_bullet
+        ret
+es_mg:
+        ld de,(mg_spr)
         ret
 es_drone:
         ld de,spr_drone_a
@@ -4140,10 +4520,12 @@ ck_not_switch:
         ld b,a
         ld a,(game_lives)
         cp 9                    ; (one HUD digit)
-        jr nc,ck_med_capped
+        jr c,ck_med_bank
+        ld a,ENERGY_MAX         ; lives full: the tank tops out and
+        jr ck_med_fits          ; the spill is lost -- never wrapped
+ck_med_bank:
         inc a
         ld (game_lives),a
-ck_med_capped:
         ld a,b
 ck_med_fits:
         ld (hl),a
@@ -5377,6 +5759,26 @@ drone_timer:    defb 100        ; frames to the dispatcher's next try
 rnd_state:      defb #5A        ; the LFSR's shift register (never 0)
 attract_pg:     defb 0          ; menu side showing: 0 title, 1 exhibits
 attract_t:      defb 250        ; frames until the page turns (5 s)
+arch_count:     defb 0          ; doorways found on this level (0-2)
+arch_tab:       defs 4,0        ; per doorway: byte column, standing y
+mg_flag:        defb 0          ; a show already ran this visit
+mg_game:        defb 0          ; which show is on
+mg_ret_x:       defb 0          ; where the shaft takes him back
+mg_ret_y:       defb 0
+mg_spr:         defw 0          ; ET_MGSPR's sprite stub of the moment
+mg_fr:          defb 0          ; 50 Hz subcount of the show clock
+mg_sec:         defb 0          ; seconds left on it
+mg_a:           defb 0          ; six bytes of per-show scratch
+mg_b:           defb 0
+mg_c:           defb 0
+mg_d:           defb 0
+mg_e:           defb 0
+mg_f:           defb 0
+mg_tab12:       defs 12,0       ; the rat hatches: timer, kind x 6
+mg_box:         defs 4,0        ; a parked whip box for slow loops
+mg_brf:         defw 0          ; the briefing card being shown
+mg_brf2:        defw 0          ; ...and the line cursor into it
+mg_brc:         defb 0          ; the next rule line's scanline
 mix_a:          defb 9          ; channel A's mixer claim (tone/noise)
 music_on:       defb 0          ; theme on the menu, dirge on the ending
 mus_b_state:    defs 3,0        ; melody: stream ptr + frames left
@@ -5543,7 +5945,7 @@ txt_i_lift:     defb "LIFT - RIDES KNOWN STOPS",0
 txt_i_duct:     defb "DUCT - DUCK OR SLIDE",0
 txt_i_drip:     defb "RED DRIP BAD - WHITE OK",0
 txt_i_vent:     defb "VENT - DODGE THE STEAM",0
-txt_i_drone:    defb "DRONE - WHIP IT UPWARD",0
+txt_i_drone:    defb "DRONE - WHIP IT DOWN",0
 txt_i_guard:    defb "GUARDS SHOOT - DUCK LOW",0
 info_tab:                       ; tile, y, text -- the museum's rows
         defb 10,16
@@ -5595,6 +5997,1519 @@ hidata_load     equ #4000
         org #A600,hidata_load
 hidata_start:
         include "levels_hi.asm"
+
+; ======================================================================
+;   THE SEVEN SHOWS -- mini-game modules, living on the shelf.
+;   mg_enter picks one by level mod 7; mg_room builds its set; each
+;   runs its own 50 Hz loop on mg_frame and leaves via mg_verdict
+;   (which never returns -- enter_level resets SP, so a show may jp
+;   there from any depth, exactly like take_hit's game-over path).
+; ======================================================================
+mg_table:
+        defw mg_tapper          ; 0  THE CANTEEN      (Tapper)
+        defw mg_moles           ; 1  PEST DETAIL      (whack-a-mole)
+        defw mg_hook            ; 2  THE HOOK         (claw machine)
+        defw mg_market          ; 3  THE BLACK MARKET (catch)
+        defw mg_gallery         ; 4  DRONE GALLERY
+        defw mg_boiler          ; 5  THE BOILER       (Breakout)
+        defw mg_firing          ; 6  THE FIRING LINE
+
+; --- shared machinery -------------------------------------------------
+
+; mg_clock -- once per frame: count a second down, keep the red 7-seg
+; pair at the top-right berth (bytes 66-72, lines 160-167) fresh in
+; whichever buffer is being drawn.
+mg_clock:
+        ld hl,mg_fr
+        dec (hl)
+        jr nz,mgc_draw
+        ld (hl),50
+        ld hl,mg_sec
+        dec (hl)
+mgc_draw:
+        ld a,(mg_sec)
+mg_pair:                        ; A as two digits on the berth
+        push af
+        xor a
+        ld b,66
+        ld c,160
+        ld d,7
+        ld e,8
+        call fill_rect
+        pop af
+        ld d,0
+mgp_t:
+        cp 10
+        jr c,mgp_o
+        sub 10
+        inc d
+        jr mgp_t
+mgp_o:
+        ld e,a
+        ld a,d
+        ld b,66
+        push de
+        call dlp_digit
+        pop de
+        ld a,e
+        ld b,70
+        jp dlp_digit
+
+; mg_brief -- the card before the curtain: HL -> a block of string
+; pointers (title first, then rule lines, 0 ends it).  Painted into
+; both buffers, held until SPACE -- or ten seconds, so a walked-away
+; machine still starts the show rather than hanging on the card.
+mg_brief:
+        ld (mg_brf),hl
+        ld b,2                  ; the same card into both buffers
+mb_both:
+        push bc
+        call clear_page
+        call mb_draw
+        call mg_frame
+        pop bc
+        djnz mb_both
+        ld b,200                ; ten seconds of reading time
+mb_wait:
+        push bc
+        call mg_frame
+        pop bc
+        ld a,(input_new)
+        bit INP_FIRE,a
+        ret nz
+        djnz mb_wait
+        ret
+
+mb_draw:
+        ld hl,(mg_brf)
+        ld e,(hl)
+        inc hl
+        ld d,(hl)
+        inc hl
+        ld (mg_brf2),hl
+        ex de,hl                ; the title, in the big yellow font
+        ld b,4
+        ld c,24
+        ld e,7
+        call draw_text_2x
+        ld a,72
+        ld (mg_brc),a
+mb_l:
+        ld hl,(mg_brf2)
+        ld e,(hl)
+        inc hl
+        ld d,(hl)
+        inc hl
+        ld (mg_brf2),hl
+        ld a,d
+        or e
+        jr z,mb_end
+        ex de,hl                ; a rule line, narrow and white
+        ld b,2
+        ld a,(mg_brc)
+        ld c,a
+        ld e,1
+        call draw_text_narrow
+        ld a,(mg_brc)
+        add a,16
+        ld (mg_brc),a
+        jr mb_l
+mb_end:
+        ld hl,txt_mg_go
+        ld b,10
+        ld c,168
+        ld e,6                  ; the prompt, in orange
+        jp draw_text_narrow
+
+; mg_boxhit -- the whip box B,C,D,E against a 4x8 body at H(x),L(y).
+; Carry set = the crack caught it.
+mg_boxhit:
+        ld a,h
+        add a,3
+        cp b
+        jr c,bh_no
+        ld a,b
+        add a,d
+        dec a
+        cp h
+        jr c,bh_no
+        ld a,l
+        add a,7
+        cp c
+        jr c,bh_no
+        ld a,c
+        add a,e
+        dec a
+        cp l
+        jr c,bh_no
+        scf
+        ret
+bh_no:
+        or a
+        ret
+
+; mg_park -- park the whip box (B,C,D,E) in mg_box for a loop to reuse
+mg_park:
+        ld a,b
+        ld (mg_box),a
+        ld a,c
+        ld (mg_box+1),a
+        ld a,d
+        ld (mg_box+2),a
+        ld a,e
+        ld (mg_box+3),a
+        ret
+mg_unpark:
+        ld a,(mg_box)
+        ld b,a
+        ld a,(mg_box+1)
+        ld c,a
+        ld a,(mg_box+2)
+        ld d,a
+        ld a,(mg_box+3)
+        ld e,a
+        ret
+
+; mg_reap -- retire DYING slots once both buffers have erased them
+; (shows that skip update_entities must sweep their own dead)
+mg_reap:
+        ld ix,entities
+        ld b,MAX_ENTITIES
+        ld de,ENT_SIZE
+mrp_l:
+        ld a,(ix+0)
+        cp ET_DYING
+        jr nz,mrp_n
+        dec (ix+8)
+        jr nz,mrp_n
+        ld (ix+0),ET_NONE
+mrp_n:
+        add ix,de
+        djnz mrp_l
+        ret
+
+; mg_life -- one more life, HUD-digit capped
+mg_life:
+        ld a,(game_lives)
+        cp 9
+        ret nc
+        inc a
+        ld (game_lives),a
+        ret
+
+; mg_paydig -- add A at the decimal digit (HL); one carry level up,
+; and a full board pegs at 9999.  (score_add is units-only -- big
+; mini-game payouts land on the hundreds or tens digit directly.)
+mg_paydig:
+        add a,(hl)
+mpd_c:
+        cp 10
+        jr c,mpd_s
+        sub 10
+        ld (hl),a               ; the remainder stays; the carry
+        ld bc,score             ; climbs until a digit absorbs it
+        ld a,l
+        cp c
+        jr nz,mpd_up
+        ld a,h
+        cp b
+        jr z,mpd_peg            ; ...or falls off the thousands
+mpd_up:
+        dec hl
+        ld a,(hl)
+        inc a
+        jr mpd_c
+mpd_s:
+        ld (hl),a
+        ret
+mpd_peg:
+        ld hl,score             ; the board pegs at 9999
+        ld a,9
+        ld (hl),a
+        inc hl
+        ld (hl),a
+        inc hl
+        ld (hl),a
+        inc hl
+        ld (hl),a
+        ret
+
+; mg_take500 -- stake 500 score; carry set = too poor to play
+mg_take500:
+        ld a,(score)
+        or a
+        jr nz,t5_ok
+        ld a,(score+1)
+        cp 5
+        ret c
+t5_ok:
+        ld a,(score+1)
+        sub 5
+        jr nc,t5_st
+        add a,10
+        ld hl,score
+        dec (hl)
+t5_st:
+        ld (score+1),a
+        or a
+        ret
+
+; ======================================================================
+; SHOW 0 -- THE CANTEEN.  Three counters, guards shuffling in from the
+; left wanting their tins; you hold the right end.  Serve all twelve.
+; ======================================================================
+mg_tapper:
+        ld hl,brf_tapper
+        call mg_brief
+        ld hl,room_tapper
+        call mg_room
+        ld a,1
+        ld (player_facing),a    ; he faces his queue
+        xor a
+        ld (mg_a),a             ; lane (0 floor, 1 mid, 2 top)
+        ld (mg_e),a             ; served
+        ld (mg_f),a             ; tins wasted
+        ld a,60
+        ld (mg_b),a             ; next guard countdown
+        ld a,110
+        ld (mg_c),a             ; spawn interval, tightening
+tp_loop:
+        call mg_frame
+        ld a,(input_new)        ; UP/DOWN hop the service ladder
+        bit INP_UP,a
+        jr z,tp_nu
+        ld a,(mg_a)
+        cp 2
+        jr nc,tp_nu
+        inc a
+        ld (mg_a),a
+tp_nu:
+        ld a,(input_new)
+        bit INP_DOWN,a
+        jr z,tp_nd
+        ld a,(mg_a)
+        or a
+        jr z,tp_nd
+        dec a
+        ld (mg_a),a
+tp_nd:
+        ld a,(mg_a)             ; stand at this lane's counter end
+        call tp_laney
+        ld (player_y),a
+        ld a,64
+        ld (player_x),a
+        ld hl,mg_b              ; the queue never thins for long
+        dec (hl)
+        jr nz,tp_ng
+        ld a,(mg_c)
+        ld (hl),a
+        cp 62
+        jr c,tp_sp
+        sub 8
+        ld (mg_c),a
+tp_sp:
+        call tp_spawn
+tp_ng:
+        ld ix,entities          ; march the queue (slots 0-2)
+        ld b,3
+tp_gl:
+        push bc
+        ld a,(ix+0)
+        cp ET_RIOT
+        jr nz,tp_gn
+        inc (ix+7)
+        bit 7,(ix+3)
+        jr nz,tp_leave
+        ld a,(frame_ctr)        ; inbound: a step every 4th frame
+        and 3
+        jr nz,tp_gn
+        inc (ix+1)
+        ld a,(ix+1)
+        cp 58
+        jr c,tp_gn
+        call take_hit           ; he reached the counter: reported
+        ld hl,txt_mg_report
+        jp mg_verdict
+tp_leave:
+        ld a,(frame_ctr)        ; served: he strides out briskly
+        and 1
+        jr nz,tp_gn
+        dec (ix+1)
+        dec (ix+1)
+        ld a,(ix+1)
+        cp 4
+        jr nc,tp_gn
+        ld (ix+0),ET_DYING
+        ld (ix+8),2
+tp_gn:
+        pop bc
+        ld de,ENT_SIZE
+        add ix,de
+        djnz tp_gl
+        ld ix,entities+3*ENT_SIZE
+        ld a,(ix+0)             ; the tin in flight (slot 3)
+        cp ET_PROJ
+        jr nz,tp_serve
+        dec (ix+1)
+        dec (ix+1)
+        ld a,(ix+1)
+        cp 4
+        jr nc,tp_hitq
+        ld (ix+0),ET_DYING      ; off the end: a wasted ration
+        ld (ix+8),2
+        ld hl,mg_f
+        inc (hl)
+        jr tp_serve
+tp_hitq:
+        call tp_meet
+tp_serve:
+        ld a,(input_new)        ; Z slings a tin down this counter
+        bit INP_ACT,a
+        jr z,tp_draw
+        ld ix,entities+3*ENT_SIZE
+        ld a,(ix+0)
+        or a
+        jr nz,tp_draw           ; one tin in the air at a time
+        ld (ix+0),ET_PROJ
+        ld (ix+1),60
+        ld a,(player_y)
+        add a,6
+        ld (ix+2),a
+        ld a,(mg_a)
+        ld (ix+9),a
+        ld (ix+7),0
+        ld a,SFX_WHIP
+        call sfx_start
+tp_draw:
+        call render_entities
+        call mg_reap
+        ld a,(mg_e)             ; the tally on the berth
+        call mg_pair
+        ld a,(mg_e)
+        cp 12
+        jp c,tp_loop
+        ld a,(mg_f)             ; end of shift: how clean?
+        or a
+        jr nz,tp_ok
+        call mg_life
+        ld hl,txt_mg_shift1
+        jp mg_verdict
+tp_ok:
+        ld hl,txt_mg_shift2
+        jp mg_verdict
+
+tp_laney:                       ; lane index -> standing y
+        or a
+        ld a,176
+        ret z
+        cp 1
+        ld a,128
+        ret z
+        ld a,80
+        ret
+
+tp_spawn:                       ; a guard in the door, random lane
+        ld ix,entities
+        ld b,3
+tps_l:
+        ld a,(ix+0)
+        or a
+        jr z,tps_f
+        ld de,ENT_SIZE
+        add ix,de
+        djnz tps_l
+        ret                     ; queue full: he waits outside
+tps_f:
+        ld (ix+0),ET_RIOT
+        ld (ix+1),4
+        call rnd8
+tps_m:
+        sub 3
+        jr nc,tps_m
+        add a,3
+        ld (ix+9),a
+        call tp_laney
+        ld (ix+2),a
+        ld (ix+3),1
+        ld (ix+7),0
+        ld (ix+8),0
+        ret
+
+tp_meet:                        ; the tin against every thirsty hand
+        ld iy,entities
+        ld b,3
+tpm_l:
+        ld a,(iy+0)
+        cp ET_RIOT
+        jr nz,tpm_n
+        bit 7,(iy+3)
+        jr nz,tpm_n
+        ld a,(iy+9)
+        cp (ix+9)
+        jr nz,tpm_n
+        ld a,(iy+1)
+        ld c,a
+        ld a,(ix+1)
+        sub c
+        add a,3
+        cp 7
+        jr nc,tpm_n
+        ld (iy+3),#FF           ; served: about face, satisfied
+        ld (ix+0),ET_DYING
+        ld (ix+8),2
+        ld hl,mg_e
+        inc (hl)
+        ld a,5
+        call score_add
+        ld a,SFX_PING
+        jp sfx_start
+tpm_n:
+        ld de,ENT_SIZE
+        add iy,de
+        djnz tpm_l
+        ret
+
+; ======================================================================
+; SHOW 1 -- PEST DETAIL.  Six hatches, rats on the LFSR, three whip
+; aims.  The white one is a sanctioned laboratory asset.
+; ======================================================================
+mg_moles:
+        ld hl,brf_moles
+        call mg_brief
+        ld hl,room_moles
+        call mg_room
+        ld hl,mg_tab12
+        ld b,12
+mm_z:
+        ld (hl),0
+        inc hl
+        djnz mm_z
+        xor a
+        ld (mg_e),a             ; the tally
+        ld (mg_f),a             ; bonus voided?
+        ld a,55
+        ld (mg_b),a             ; next pop
+        ld (mg_c),a             ; pop interval, tightening
+        ld a,60
+        ld (mg_sec),a
+        ld a,50
+        ld (mg_fr),a
+mm_loop:
+        call mg_frame
+        call update_player
+        ld a,(whip_timer)
+        cp WHIP_TIME-4
+        call z,mm_crack
+        ld hl,mg_b
+        dec (hl)
+        jr nz,mm_np
+        ld a,(mg_c)
+        ld (hl),a
+        cp 26
+        jr c,mm_pop
+        dec a
+        ld (mg_c),a
+mm_pop:
+        call mm_new
+mm_np:
+        call mm_age
+        call render_entities
+        call mm_show            ; rats over everything, every frame
+        call mg_clock
+        ld a,(mg_sec)
+        or a
+        jp nz,mm_loop
+        ld a,(mg_f)
+        or a
+        jr z,mm_fair
+        ld hl,txt_mg_voided
+        jp mg_verdict
+mm_fair:
+        ld a,(mg_e)
+        cp 15
+        jr c,mm_short
+        ld a,1
+        call add_energy
+        ld hl,txt_mg_quota
+        jp mg_verdict
+mm_short:
+        ld hl,txt_mg_missed
+        jp mg_verdict
+
+mm_new:                         ; a nose at a random shut hatch
+        call rnd8
+        and 7
+        cp 6
+        ret nc
+        ld e,a
+        add a,a
+        ld hl,mg_tab12
+        add a,l
+        ld l,a
+        jr nc,$+3
+        inc h
+        ld a,(hl)
+        or a
+        ret nz                  ; already out
+        ld (hl),70
+        inc hl
+        call rnd8
+        cp 38                   ; ~15%: the white one
+        ld a,0
+        jr nc,mmn_k
+        inc a
+mmn_k:
+        ld (hl),a
+        ret
+
+mm_age:                         ; timers down; it ducks back at zero
+        ld hl,mg_tab12
+        ld b,6
+mma_l:
+        ld a,(hl)
+        or a
+        jr z,mma_n
+        dec (hl)
+mma_n:
+        inc hl
+        inc hl
+        djnz mma_l
+        ret
+
+mm_show:                        ; open hatches wear rats; shut ones
+        ld c,0                  ; get their grate back
+mms_l:
+        ld a,c
+        add a,a
+        ld hl,mg_tab12
+        add a,l
+        ld l,a
+        jr nc,$+3
+        inc h
+        ld a,(hl)
+        or a
+        jr z,mms_shut
+        inc hl
+        ld a,(hl)
+        or a
+        ld de,spr_rat_a
+        jr z,mms_d
+        ld de,spr_rat_w
+mms_d:
+        push bc
+        push de
+        ld a,c
+        call mm_at
+        pop de
+        call draw_sprite_8x16
+        pop bc
+        jr mms_n
+mms_shut:
+        push bc
+        ld a,c
+        call mm_at
+        call restore_tiles
+        pop bc
+mms_n:
+        inc c
+        ld a,c
+        cp 6
+        jr c,mms_l
+        ret
+
+mm_at:                          ; hatch index A -> B,C on screen
+        add a,a
+        ld hl,mm_spots
+        add a,l
+        ld l,a
+        jr nc,$+3
+        inc h
+        ld b,(hl)
+        inc hl
+        ld c,(hl)
+        ret
+
+mm_crack:                       ; the whip against every open hatch
+        call whip_box
+        ret nc
+        call mg_park
+        ld c,0
+mmc_l:
+        push bc
+        ld a,c
+        add a,a
+        ld hl,mg_tab12
+        add a,l
+        ld l,a
+        jr nc,$+3
+        inc h
+        ld a,(hl)
+        or a
+        jr z,mmc_n
+        ld a,c
+        call mm_at
+        ld h,b
+        ld l,c
+        call mg_unpark
+        call mg_boxhit
+        jr nc,mmc_n
+        pop bc
+        push bc
+        ld a,c
+        call mm_hit
+mmc_n:
+        pop bc
+        inc c
+        ld a,c
+        cp 6
+        jr c,mmc_l
+        ret
+
+mm_hit:                         ; hatch A: the whip found a nose
+        add a,a
+        ld hl,mg_tab12
+        add a,l
+        ld l,a
+        jr nc,$+3
+        inc h
+        ld (hl),0
+        inc hl
+        ld a,(hl)
+        or a
+        jr nz,mmh_white
+        ld hl,mg_e
+        inc (hl)
+        ld a,2
+        call score_add
+        ld a,SFX_KILL
+        jp sfx_start
+mmh_white:
+        ld a,1                  ; the Broadcast is displeased
+        ld (mg_f),a
+        ld a,SFX_PING
+        jp sfx_start
+
+mm_spots:                       ; the six hatches: byte column, y
+        defb 16,176, 36,176, 56,176
+        defb 16,160, 36,160, 56,160
+
+; ======================================================================
+; SHOW 2 -- THE HOOK.  An off-books salvage crane over a bin of sealed
+; crates.  500 score the stake, three drops, the house usually wins.
+; ======================================================================
+mg_hook:
+        ld hl,brf_hook
+        call mg_brief
+        call mg_take500
+        jr nc,hk_paid
+        ld hl,txt_mg_poor
+        jp mg_verdict
+hk_paid:
+        ld hl,room_hook
+        call mg_room
+        ld hl,spr_hook
+        ld (mg_spr),hl
+        ld ix,entities          ; slot 0: the hook itself
+        ld (ix+0),ET_MGSPR
+        ld (ix+1),20
+        ld (ix+2),140
+        ld (ix+7),0
+        ld a,3
+        ld (mg_a),a             ; drops left
+        ld a,1
+        ld (mg_c),a             ; trolley direction
+        xor a
+        ld (mg_d),a             ; phase: 0 swing, 1 drop, 2 rise
+hk_loop:
+        call mg_frame
+        ld ix,entities
+        ld a,(mg_d)
+        or a
+        jr z,hk_swing
+        dec a
+        jr z,hk_drop
+        ld a,(ix+2)             ; rising with the catch
+        sub 4
+        ld (ix+2),a
+        cp 140
+        jr nz,hk_draw
+        xor a
+        ld (mg_d),a
+        ld a,(mg_a)
+        dec a
+        ld (mg_a),a
+        jr nz,hk_draw
+        ld hl,txt_mg_house      ; the chain man takes the crane back
+        jp mg_verdict
+hk_swing:
+        ld a,(mg_c)
+        ld c,a
+        ld a,(ix+1)             ; the trolley walks its rail
+        add a,c
+        ld (ix+1),a
+        cp 16
+        jr nz,hks_r
+        ld a,1
+        ld (mg_c),a
+hks_r:
+        cp 60
+        jr nz,hks_f
+        ld a,#FF
+        ld (mg_c),a
+hks_f:
+        ld a,(input_new)        ; one press lets it go...
+        bit INP_FIRE,a
+        jr z,hks_q
+        ld a,1
+        ld (mg_d),a
+        ld a,SFX_WHIP
+        call sfx_start
+        jr hk_draw
+hks_q:
+        ld a,(input_new)        ; ...and DOWN walks away, the stake
+        bit INP_DOWN,a          ; staying on the table
+        jr z,hk_draw
+        ld hl,txt_mg_house
+        jp mg_verdict
+hk_drop:
+        ld a,(ix+2)
+        add a,2
+        ld (ix+2),a
+        cp 176                  ; the bin
+        jr c,hk_draw
+        call hk_prize
+        ld a,2
+        ld (mg_d),a
+hk_draw:
+        call render_entities
+        ld a,(mg_a)             ; drops left on the berth
+        call mg_pair
+        jp hk_loop
+
+hk_prize:                       ; where it landed decides the odds
+        ld a,(ix+1)
+        dec a
+        and 3
+        jr z,hkp_clean
+        call rnd8               ; sloppy: mostly scrap
+        cp 40
+        jr c,hkp_energy
+        ld a,1                  ; ten points of junk
+        ld hl,score+2
+        call mg_paydig
+        ld a,SFX_HIT
+        jp sfx_start
+hkp_clean:
+        call rnd8
+        cp 96
+        jr c,hkp_energy
+        cp 112
+        jr c,hkp_life
+        ld a,5                  ; fifty of decent scrap
+        ld hl,score+2
+        call mg_paydig
+        ld a,SFX_HIT
+        jp sfx_start
+hkp_energy:
+        ld a,1
+        call add_energy
+        ld a,SFX_PING
+        jp sfx_start
+hkp_life:
+        call mg_life            ; the smuggler's stash!
+        ld a,SFX_KILL
+        jp sfx_start
+
+; ======================================================================
+; SHOW 3 -- THE BLACK MARKET.  A smuggler drops stock; the pipe's
+; drips are the surveillance telegraph.  White: catch.  Red: statue.
+; ======================================================================
+mg_market:
+        ld hl,brf_market
+        call mg_brief
+        ld hl,room_market
+        call mg_room
+        ld ix,entities          ; slot 0: the man on the gantry
+        ld (ix+0),ET_THROW
+        ld (ix+1),36
+        ld (ix+2),48
+        ld (ix+7),0
+        xor a
+        ld (mg_a),a             ; phase: 0 white, 1 red
+        ld (mg_e),a             ; caught
+        ld (mg_f),a             ; alarm state: 0 calm, 1 sweeping
+        ld a,140
+        ld (mg_b),a             ; phase clock
+        ld a,70
+        ld (mg_c),a             ; next package
+        ld a,45
+        ld (mg_d),a             ; next telegraph drip
+        ld a,60
+        ld (mg_sec),a
+        ld a,50
+        ld (mg_fr),a
+mk_loop:
+        call mg_frame
+        call update_player
+        ld ix,entities          ; the gantry man never throws his own
+        ld (ix+8),100
+        ld hl,mg_b              ; the eye's phases...
+        dec (hl)
+        jr nz,mk_ph
+        call mk_falling         ; ...held while stock is mid-air
+        jr z,mk_flip
+        inc (hl)
+        jr mk_ph
+mk_flip:
+        ld a,(mg_a)
+        xor 1
+        ld (mg_a),a
+        call mk_paint
+        ld a,(mg_a)
+        or a
+        ld a,140                ; white: long and generous
+        jr z,mk_pt
+        ld a,90                 ; red: a held breath
+mk_pt:
+        ld (hl),a
+mk_ph:
+        ld hl,mg_d              ; the telegraph drips
+        dec (hl)
+        jr nz,mk_dr
+        ld (hl),45
+        call mk_drip
+mk_dr:
+        ld hl,mg_c              ; the stock
+        dec (hl)
+        jr nz,mk_pk
+        ld (hl),70
+        call mk_package
+mk_pk:
+        ld a,(mg_a)             ; red-phase discipline
+        or a
+        jr z,mk_upd
+        ld a,(mg_f)
+        or a
+        jr nz,mk_upd
+        ld a,(player_moved)
+        ld hl,player_state
+        or (hl)
+        ld hl,whip_timer
+        or (hl)
+        jr z,mk_upd
+        ld a,1                  ; the eye blinked -- and saw
+        ld (mg_f),a
+        call mk_alarm
+mk_upd:
+        call update_entities
+        call mk_catch
+        call mk_sweep
+        call check_enemy_hit
+        call c,take_hit
+        call render_entities
+        call mg_clock
+        ld a,(mg_sec)
+        or a
+        jp nz,mk_loop
+        ld hl,txt_mg_sold
+        jp mg_verdict
+
+mk_falling:                     ; Z when no package is in the air
+        ld hl,entities+ENT_SIZE
+        ld b,MAX_ENTITIES-1
+        ld de,ENT_SIZE
+mkf_l:
+        ld a,(hl)
+        cp ET_PROJ
+        ret z
+        add hl,de
+        djnz mkf_l
+        xor a
+        ret
+
+mk_paint:                       ; the pipe wears the eye's colour
+        ld hl,(current_map)
+        ld de,22                ; row 1, col 2
+        add hl,de
+        ld a,(mg_a)
+        or a
+        jr z,mkp_w
+        ld (hl),21              ; leak_red: it is watching
+        jp redraw_cell_both
+mkp_w:
+        ld (hl),22              ; leak_white: it is blind
+        jp redraw_cell_both
+
+mk_slot:                        ; IY = a free pool slot (Z clear: none)
+        ld iy,entities+ENT_SIZE
+        ld b,MAX_ENTITIES-1
+        ld de,ENT_SIZE
+mks_l:
+        ld a,(iy+0)
+        or a
+        ret z
+        add iy,de
+        djnz mks_l
+        or 1
+        ret
+
+mk_drip:                        ; one drop in the eye's colour
+        call mk_slot
+        ret nz
+        ld (iy+0),ET_DRIP
+        ld (iy+1),8
+        ld (iy+2),16
+        ld (iy+7),0
+        ld a,(mg_a)
+        ld (iy+9),a
+        ret
+
+mk_package:                     ; stock away!
+        call mk_slot
+        ret nz
+        ld (iy+0),ET_PROJ
+        call rnd8
+        and 31
+        add a,22
+        ld (iy+1),a
+        ld (iy+2),72
+        ld (iy+7),0
+        ret
+
+mk_catch:                       ; hands when standing; a duck lets it
+        ld ix,entities+ENT_SIZE ; burst on the helmet, harmless and
+        ld b,MAX_ENTITIES-1     ; worthless -- either way no package
+mkc_l:                          ; ever reaches check_enemy_hit
+        push bc
+        ld a,(ix+0)
+        cp ET_PROJ
+        jr nz,mkc_n
+        ld a,(player_x)
+        ld c,a
+        ld a,(ix+1)
+        sub c
+        add a,3                 ; the full contact band
+        cp 7
+        jr nc,mkc_n
+        ld a,(player_y)
+        ld c,a
+        ld a,(ix+2)
+        add a,7
+        cp c
+        jr c,mkc_n              ; still above his head
+        ld a,c
+        add a,15
+        ld c,a
+        ld a,(ix+2)
+        cp c
+        jr z,mkc_ok
+        jr nc,mkc_n             ; already past his boots
+mkc_ok:
+        ld (ix+0),ET_DYING      ; off the board either way
+        ld (ix+8),2
+        ld a,(player_duck)
+        or a
+        jr z,mkc_bag
+        ld a,SFX_HIT            ; helmet down: burst, no harm, no pay
+        call sfx_start
+        jr mkc_n
+mkc_bag:
+        ld hl,mg_e              ; in the bag
+        inc (hl)
+        ld a,3
+        call score_add
+        ld a,SFX_PING
+        call sfx_start
+        ld a,(mg_e)             ; every third is real medicine
+mkc_3:
+        sub 3
+        jr z,mkc_med
+        jr nc,mkc_3
+        jr mkc_n
+mkc_med:
+        ld a,1
+        call add_energy
+mkc_n:
+        pop bc
+        ld de,ENT_SIZE
+        add ix,de
+        djnz mkc_l
+        ret
+
+mk_alarm:                       ; the coat man kicks the door in
+        call mk_slot
+        ret nz
+        ld (iy+0),ET_COAT
+        ld (iy+1),2
+        ld (iy+2),176
+        ld (iy+3),2             ; storming right, fast
+        ld (iy+4),2
+        ld (iy+5),2
+        ld (iy+6),76
+        ld (iy+7),0
+        ld a,SFX_KILL
+        jp sfx_start
+
+mk_sweep:                       ; his pass ends the market
+        ld ix,entities+ENT_SIZE
+        ld b,MAX_ENTITIES-1
+        ld de,ENT_SIZE
+mkw_l:
+        ld a,(ix+0)
+        cp ET_COAT
+        jr z,mkw_c
+        add ix,de
+        djnz mkw_l
+        ret
+mkw_c:
+        ld a,(ix+1)
+        cp 70
+        ret c
+        ld hl,txt_mg_eye        ; the smuggler is long gone
+        jp mg_verdict
+
+; ======================================================================
+; SHOW 4 -- DRONE GALLERY.  Decommissioned kamikazes from the hatches;
+; quota eight in sixty seconds, and stings are not refunded.
+; ======================================================================
+mg_gallery:
+        ld hl,brf_gallery
+        call mg_brief
+        ld hl,room_gallery
+        call mg_room
+        xor a
+        ld (mg_e),a             ; kills
+        ld a,60
+        ld (mg_sec),a
+        ld a,50
+        ld (mg_fr),a
+        ld a,30
+        ld (mg_b),a             ; first release soon
+gl_loop:
+        call mg_frame
+        call update_player
+        ld a,(whip_timer)
+        cp WHIP_TIME-4
+        call z,gl_crack
+        ld hl,mg_b
+        dec (hl)
+        jr nz,gl_nr
+        ld (hl),80
+        ld de,ENT_SIZE
+        call spawn_drone
+gl_nr:
+        call update_entities
+        call render_entities
+        call mg_clock
+        ld a,(mg_sec)
+        or a
+        jp nz,gl_loop
+        ld a,(mg_e)
+        cp 8
+        jr c,gl_short
+        ld a,1
+        call add_energy
+        ld a,(mg_e)             ; a hundred per kill past quota...
+        sub 8
+        jr z,glp_base
+        cp 10
+        jr c,glp_x
+        ld a,9
+glp_x:
+        ld hl,score+1
+        call mg_paydig
+glp_base:
+        ld a,5                  ; ...on top of the five hundred
+        ld hl,score+1
+        call mg_paydig
+        ld hl,txt_mg_quota
+        jp mg_verdict
+gl_short:
+        ld hl,txt_mg_missed
+        jp mg_verdict
+
+gl_count:                       ; A = drones aloft
+        ld ix,entities
+        ld b,MAX_ENTITIES
+        ld c,0
+        ld de,ENT_SIZE
+glc_l:
+        ld a,(ix+0)
+        cp ET_DRONE
+        jr nz,glc_n
+        inc c
+glc_n:
+        add ix,de
+        djnz glc_l
+        ld a,c
+        ret
+
+gl_crack:                       ; kills = aloft before minus after
+        call gl_count
+        push af
+        call whip_hits
+        call gl_count
+        ld c,a
+        pop af
+        sub c
+        ret z
+        ld hl,mg_e
+        add a,(hl)
+        ld (hl),a
+        ret
+
+; ======================================================================
+; SHOW 5 -- THE BOILER.  Breakout with a whip: the crusted face up
+; top, a red-hot slag pellet, and three chances on the floor.
+; ======================================================================
+mg_boiler:
+        ld hl,brf_boiler
+        call mg_brief
+        ld hl,room_boiler
+        call mg_room
+        ld ix,entities
+        ld (ix+0),ET_PROJ       ; the pellet (the rock IS red-hot)
+        ld (ix+1),30
+        ld (ix+2),100
+        ld (ix+7),0
+        ld a,1
+        ld (mg_b),a             ; dx
+        ld (mg_c),a             ; dy
+        ld a,3
+        ld (mg_a),a             ; pellets left
+        ld a,48
+        ld (mg_e),a             ; crud remaining
+bl_loop:
+        call mg_frame
+        call update_player
+        ld a,(whip_timer)
+        cp WHIP_TIME-4
+        call z,bl_crack
+        ld ix,entities
+        ld a,(mg_b)
+        add a,(ix+1)
+        ld (ix+1),a
+        cp 2
+        jr nc,bl_xr
+        ld a,1
+        ld (mg_b),a
+bl_xr:
+        cp 74
+        jr c,bl_xd
+        ld a,#FF
+        ld (mg_b),a
+bl_xd:
+        ld a,(mg_c)
+        add a,(ix+2)
+        ld (ix+2),a
+        cp 10
+        jr nc,bl_yc
+        ld a,1                  ; the ceiling returns it
+        ld (mg_c),a
+bl_yc:
+        cp 180
+        jr c,bl_crud
+        ld a,(mg_a)             ; lost to the floor
+        dec a
+        ld (mg_a),a
+        jr z,bl_foul
+        ld (ix+1),30            ; a fresh pellet from the chute
+        ld (ix+2),100
+        ld a,1
+        ld (mg_c),a
+        ld a,SFX_HIT
+        call sfx_start
+        jr bl_draw
+bl_foul:
+        ld hl,txt_mg_foul
+        jp mg_verdict
+bl_crud:
+        ld a,(mg_c)             ; only a rising pellet chips scale
+        inc a
+        jr nz,bl_draw
+        ld a,(ix+2)
+        srl a
+        srl a
+        srl a                   ; its row
+        cp 2
+        jr c,bl_draw
+        cp 5
+        jr nc,bl_draw
+        ld c,a
+        ld a,(ix+1)
+        inc a
+        srl a
+        srl a                   ; its column
+        ld e,a
+        ld a,c
+        add a,a
+        add a,a
+        add a,c
+        ld l,a
+        ld h,0
+        add hl,hl
+        add hl,hl
+        ld d,0
+        add hl,de
+        ld de,(current_map)
+        add hl,de
+        ld a,(hl)
+        cp 5                    ; scale?
+        jr nz,bl_draw
+        ld (hl),0               ; chipped clean off
+        call redraw_cell_both
+        ld a,1
+        ld (mg_c),a
+        ld a,2
+        call score_add
+        ld a,SFX_PING
+        call sfx_start
+        ld hl,mg_e
+        dec (hl)
+        jr z,bl_clean
+        ld a,(hl)
+        and 15                  ; every 16th chip: pressure drops
+        jr nz,bl_draw
+        ld a,1
+        call add_energy
+        ld a,SFX_KILL
+        call sfx_start
+bl_draw:
+        call render_entities
+        jp bl_loop
+bl_clean:
+        ld a,1
+        call add_energy
+        ld hl,txt_mg_clear
+        jp mg_verdict
+
+bl_crack:                       ; the overhead whip returns the pellet
+        ld a,(whip_dir)
+        dec a
+        ret nz
+        call whip_box
+        ret nc
+        ld ix,entities
+        ld h,(ix+1)
+        ld l,(ix+2)
+        call mg_boxhit
+        ret nc
+        ld a,#FF                ; up she goes...
+        ld (mg_c),a
+        ld a,(ix+1)             ; ...angled off the man's stance
+        ld c,a
+        ld a,(player_x)
+        inc a
+        cp c
+        ld a,1
+        jr c,bl_ca
+        ld a,#FF
+bl_ca:
+        ld (mg_b),a
+        ld a,SFX_PING
+        jp sfx_start
+
+; ======================================================================
+; SHOW 6 -- THE FIRING LINE.  A volunteer decoy under scripted salvos
+; at two heights.  A clean sheet pays a whole life.
+; ======================================================================
+mg_firing:
+        ld hl,brf_firing
+        call mg_brief
+        ld hl,room_firing
+        call mg_room
+        ld a,(player_energy)
+        ld (mg_d),a             ; the clean-sheet snapshot
+        ld a,(game_lives)
+        ld (mg_e),a
+        ld a,45
+        ld (mg_sec),a
+        ld a,50
+        ld (mg_fr),a
+        ld a,60
+        ld (mg_b),a             ; first salvo
+        ld a,70
+        ld (mg_c),a             ; interval, tightening
+fl_loop:
+        call mg_frame
+        call update_player
+        ld hl,mg_b
+        dec (hl)
+        jr nz,fl_ns
+        ld a,(mg_c)
+        ld (hl),a
+        cp 36
+        jr c,fl_sp
+        sub 2
+        ld (mg_c),a
+fl_sp:
+        call fl_salvo
+fl_ns:
+        call update_entities
+        call render_entities
+        call mg_clock
+        ld a,(mg_sec)
+        or a
+        jp nz,fl_loop
+        ld a,(mg_d)
+        ld hl,player_energy
+        cp (hl)
+        jr nz,fl_pay
+        ld a,(mg_e)
+        ld hl,game_lives
+        cp (hl)
+        jr nz,fl_pay
+        call mg_life
+        ld hl,txt_mg_clean
+        jp mg_verdict
+fl_pay:
+        ld a,1
+        call add_energy
+        ld hl,txt_mg_pay
+        jp mg_verdict
+
+fl_salvo:
+        ld iy,entities
+        ld b,MAX_ENTITIES
+        ld de,ENT_SIZE
+fls_l:
+        ld a,(iy+0)
+        or a
+        jr z,fls_f
+        add iy,de
+        djnz fls_l
+        ret
+fls_f:
+        ld (iy+0),ET_BULLET
+        call rnd8
+        ld c,a
+        bit 0,c
+        jr z,fls_r
+        ld (iy+1),2
+        ld (iy+3),1
+        jr fls_h
+fls_r:
+        ld (iy+1),76
+        ld (iy+3),#FF
+fls_h:
+        ld a,181                ; gun height: duck or slide under
+        bit 1,c
+        jr z,fls_y
+        ld a,188                ; shin height: jump it
+fls_y:
+        ld (iy+2),a
+        ld (iy+7),0
+        ret
+
+; --- the seven sets ---------------------------------------------------
+; room format: player_x, player_y, floor tile,
+;              (tile, col, row, run)* #FF, (x,w,y,h,type)* #FF
+room_tapper:
+        defb 64,176, 3
+        defb 2,2,18,15
+        defb 2,2,12,15
+        defb 4,15,12,1, 4,15,13,1, 4,15,14,1
+        defb 4,15,18,1, 4,15,19,1, 4,15,20,1
+        defb 16,1,4,3
+        defb #FF
+        defb 0,80,192,8,1
+        defb #FF
+room_moles:
+        defb 34,176, 3
+        defb 16,4,22,1, 16,9,22,1, 16,14,22,1
+        defb 16,4,20,1, 16,9,20,1, 16,14,20,1
+        defb 18,1,2,1
+        defb #FF
+        defb 0,80,192,8,1
+        defb #FF
+room_hook:
+        defb 70,176, 3
+        defb 38,3,17,14
+        defb 5,4,23,12
+        defb 7,3,23,1, 7,16,23,1
+        defb #FF
+        defb 0,80,192,8,1
+        defb #FF
+room_market:
+        defb 40,176, 3
+        defb 2,5,8,10
+        defb 22,2,1,1
+        defb #FF
+        defb 0,80,192,8,1
+        defb #FF
+room_gallery:
+        defb 38,176, 3
+        defb 18,1,20,1
+        defb 7,0,23,2, 7,18,23,2
+        defb #FF
+        defb 0,80,192,8,1
+        defb #FF
+room_boiler:
+        defb 38,176, 3
+        defb 1,0,0,20, 1,0,1,20
+        defb 5,2,2,16
+        defb 5,2,3,16
+        defb 5,2,4,16
+        defb #FF
+        defb 0,80,192,8,1
+        defb #FF
+room_firing:
+        defb 38,176, 3
+        defb 7,0,21,1, 7,19,21,1
+        defb 7,0,22,1, 7,19,22,1
+        defb #FF
+        defb 0,80,192,8,1
+        defb #FF
+
+; --- the briefing cards -----------------------------------------------
+; A title and two rules apiece: what the job is, and the one thing
+; that ends it badly.
+txt_mg_go:      defb "SPACE TO START",0
+brf_tapper:     defw txt_bt1,txt_bt2,txt_bt3,0
+txt_bt1:        defb "CANTEEN",0
+txt_bt2:        defb "UP DOWN PICK A COUNTER",0
+txt_bt3:        defb "Z SERVES - SERVE ALL 12",0
+brf_moles:      defw txt_bm1,txt_bm2,txt_bm3,0
+txt_bm1:        defb "RAT SHIFT",0
+txt_bm2:        defb "WHIP 15 RATS IN 60 SEC",0
+txt_bm3:        defb "SPARE THE WHITE ONE",0
+brf_hook:       defw txt_bh1,txt_bh2,txt_bh3,0
+txt_bh1:        defb "THE HOOK",0
+txt_bh2:        defb "500 POINTS - 3 DROPS",0
+txt_bh3:        defb "FIRE DROPS - DOWN LEAVES",0
+brf_market:     defw txt_bk1,txt_bk2,txt_bk3,0
+txt_bk1:        defb "MARKET",0
+txt_bk2:        defb "CATCH WHILE DRIPS RUN",0
+txt_bk3:        defb "WHITE - RED FREEZE",0
+brf_gallery:    defw txt_bg1,txt_bg2,txt_bg3,0
+txt_bg1:        defb "DRONES",0
+txt_bg2:        defb "WHIP 8 DRONES IN 60 SEC",0
+txt_bg3:        defb "UP AIM REACHES HIGHEST",0
+brf_boiler:     defw txt_bb1,txt_bb2,txt_bb3,0
+txt_bb1:        defb "BOILER",0
+txt_bb2:        defb "Z AND UP BATS IT BACK",0
+txt_bb3:        defb "3 ON THE FLOOR AND OUT",0
+brf_firing:     defw txt_bf1,txt_bf2,txt_bf3,0
+txt_bf1:        defb "FIRING",0
+txt_bf2:        defb "DUCK HIGH - JUMP LOW",0
+txt_bf3:        defb "45 SEC - UNTOUCHED PAYS",0
+
+; --- the closing lines ------------------------------------------------
+txt_mg_report:  defb "REPORTED - SHIFT OVER",0
+txt_mg_shift1:  defb "PERFECT SHIFT - A LIFE",0
+txt_mg_shift2:  defb "SHIFT SERVED",0
+txt_mg_voided:  defb "BONUS VOIDED BY ORDER",0
+txt_mg_quota:   defb "QUOTA MET",0
+txt_mg_missed:  defb "QUOTA MISSED",0
+txt_mg_poor:    defb "COME BACK WITH 500",0
+txt_mg_house:   defb "THE HOUSE THANKS YOU",0
+txt_mg_sold:    defb "STOCK SOLD OUT",0
+txt_mg_eye:     defb "THE EYE SAW YOU",0
+txt_mg_foul:    defb "IT FOULED AGAIN",0
+txt_mg_clear:   defb "BOILER CLEAN",0
+txt_mg_clean:   defb "CLEAN SHEET - A LIFE",0
+txt_mg_pay:     defb "HAZARD PAY",0
+
 hidata_end:
         assert hidata_end <= #C000              ; below screen buffer A
         assert hidata_load+hidata_end-hidata_start <= #8000
