@@ -464,13 +464,15 @@ FRAMES = {
     # lines, like the drone); red-eyed vermin fair game, the white
     # 'laboratory asset' is protected.  The hook hangs from the mess
     # hall's off-books salvage crane.
+    # pen 5 (red, the same ink on every floor) with yellow eyes: in its
+    # first coat of pen 3 it was dark blue on black and barely there
     'spr_rat_a': [
         "........",
-        "..33.3..",
-        ".33333..",
-        "3355333.",
-        "33333333",
-        ".3.3.3.3",
+        "..55.5..",
+        ".55555..",
+        "5577555.",
+        "55555555",
+        ".5.5.5.5",
         "........",
         "........",
         "........",
@@ -509,6 +511,27 @@ FRAMES = {
         ".1....1.",
         "..1..1..",
         "...11...",
+        "........",
+        "........",
+        "........",
+        "........",
+        "........",
+        "........",
+        "........",
+        "........",
+    ],
+    # The boiler's pellet: red-hot slag, white-yellow at the core.
+    # Fixed pens 5 and 7 so it glows on every floor -- in the rock's
+    # pen 6 it took the crust's own colour (green, or blue on black).
+    'spr_slag': [
+        "..55....",
+        ".5775...",
+        ".57775..",
+        ".5775...",
+        "..55....",
+        "........",
+        "........",
+        "........",
         "........",
         "........",
         "........",

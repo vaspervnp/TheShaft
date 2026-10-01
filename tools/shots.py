@@ -381,10 +381,162 @@ def main():
     check_fresh()
     if "--levels" in sys.argv:
         return level_report()
+    if "--shows" in sys.argv:
+        return shoot_shows()
     os.makedirs("docs", exist_ok=True)
     for name, fn in SHOTS:
         fn(f"docs/{name}.png")
         print(f"docs/{name}.png")
+
+
+
+# ======================================================================
+#   THE SIDE-SHOWS
+#
+#   Each of the seven arcades is photographed through the real door: the
+#   host floor is loaded, the mechanic stands on the marked arch, UP is
+#   pressed, and check_arch -> mg_enter -> the show's own loop runs
+#   exactly as on the machine.  Each show plays on two floors in two
+#   different zones, so it is shot in both palettes.
+# ======================================================================
+SHOW_NAMES = ["tapper", "moles", "hook", "market", "gallery", "boiler", "firing"]
+
+
+def show_hosts():
+    """marquee m sits on level 5 + 4m and bills show m mod 7."""
+    out = {}
+    for m in range(14):
+        out.setdefault(SHOW_NAMES[m % 7], []).append(5 + 4 * m)
+    return out
+
+
+def enter_show(level):
+    """Load the host floor and walk through its marked doorway."""
+    boot()
+    new_game()
+    stage_bank(level)
+    MEM[S("CURRENT_LEVEL")] = level
+    call("LOAD_LEVEL", a=level)
+    n = MEM[S("ARCH_COUNT")]
+    tab = S("ARCH_TAB")
+    for i in range(n):                  # the arch whose show is billed
+        ax, ay = MEM[tab + 2 * i], MEM[tab + 2 * i + 1]
+        z = enter(level, x=ax, y=ay)
+        fs, ri = S("FRAME_SYNC"), S("READ_INPUT")
+        # a few quiet frames to settle, then UP on its press edge
+        clock = 0
+        while clock < 6:
+            if z.pc == fs:
+                clock += 1
+                z.pc = z.pop()
+                MEM[S("INPUT_HELD")] = INP_UP if clock == 5 else 0
+                MEM[S("INPUT_NEW")] = INP_UP if clock == 5 else 0
+                continue
+            if z.pc == ri:
+                z.pc = z.pop()
+                continue
+            z.step()
+        if MEM[S("MG_FLAG")]:
+            return z
+    return None
+
+
+def show_frames(z, marks, feed, budget=900_000_000):
+    """Run the show; at each frame number in `marks` snapshot the buffer
+    that has just been finished.  Stops at mg_exit."""
+    fs, ri, ft = S("FRAME_SYNC"), S("READ_INPUT"), S("FRAME_TICKS")
+    ex = S("MG_EXIT")
+    shots_out, clock, last = {}, 0, None
+    marks = sorted(marks)
+    while budget:
+        if z.pc == ex:
+            if last is not None:
+                shots_out["end"] = last
+            return shots_out, clock
+        if z.pc == fs:
+            clock += 1
+            last = bytes(MEM[(MEM[S("DRAW_PAGE")] << 8):
+                             (MEM[S("DRAW_PAGE")] << 8) + 0x4000])
+            if clock in marks:
+                shots_out[clock] = last
+            z.pc = z.pop()
+            MEM[ft] = (MEM[ft] + 6) & 0xFF
+            held, new = feed(clock)
+            MEM[S("INPUT_HELD")] = held
+            MEM[S("INPUT_NEW")] = new
+            MEM[S("KEY_MATRIX") + 8] = 0xFF
+            continue
+        if z.pc == ri:
+            z.pc = z.pop()
+            continue
+        z.step()
+        budget -= 1
+    return shots_out, clock
+
+
+def render_buf(buf, pal):
+    line = line_table()
+    img = Image.new("RGB", (160, 200))
+    put = img.load()
+    for y in range(200):
+        a = line[y]
+        for xb in range(80):
+            b = buf[a + xb]
+            put[xb * 2, y] = pal[pen_left(b)]
+            put[xb * 2 + 1, y] = pal[pen_left((b << 1) & 0xFF)]
+    return img.resize((640, 400), Image.NEAREST)
+
+
+def player_feed(clock):
+    """A believable player: dismisses the card, walks back and forth,
+    cracks the whip, jumps now and then."""
+    if clock == 4:
+        return INP_FIRE, INP_FIRE            # SPACE: off the card
+    held = INP_RIGHT if (clock // 45) % 2 == 0 else INP_LEFT
+    new = 0
+    if clock % 23 == 0:
+        new |= INP_ACT
+    if clock % 97 == 0:
+        new |= INP_FIRE
+    return held | new, new
+
+
+def shoot_shows(outdir="build/mg"):
+    import os
+    os.makedirs(outdir, exist_ok=True)
+    marks = [2, 30, 120, 300, 600, 1200]
+    runs = [(n, l, None) for n, ls in show_hosts().items() for l in ls]
+    runs.append(("hookpoor", 13, 0))            # the refusal, kept on film
+    only = [a.split("=", 1)[1].split(",") for a in sys.argv if a.startswith("--only=")]
+    if only:
+        runs = [r for r in runs if r[0] in only[0]]
+    for name, lvl, score in runs:
+        if True:
+            z = enter_show(lvl)
+            if z is None:
+                print(f"{name} L{lvl}: could not enter")
+                continue
+            # the crane wants a 50-point stake: give it 100 so the shot
+            # shows a game being PLAYED, not a broke man turned away
+            pts = 100 if (name == "hook" and score is None) else (score or 0)
+            MEM[S("SCORE") + 1] = pts // 100
+            MEM[S("SCORE") + 2] = (pts // 10) % 10
+            snaps, n = show_frames(z, marks, player_feed)
+            pal = palette(zone_of(lvl))
+            tiles = []
+            for k in marks + ["end"]:
+                if k in snaps:
+                    im = render_buf(snaps[k], pal)
+                    im.save(f"{outdir}/{name}_L{lvl:02}_{k}.png")
+                    tiles.append((k, im))
+            # one contact sheet per show and floor
+            sheet = Image.new("RGB", (640 * 4 + 30, 400 * 2 + 10), (40, 40, 40))
+            for i, (k, im) in enumerate(tiles[:8]):
+                sheet.paste(im, ((i % 4) * 650, (i // 4) * 410))
+            sheet = sheet.resize((sheet.size[0] // 2, sheet.size[1] // 2), Image.LANCZOS)
+            sheet.save(f"{outdir}/sheet_{name}_L{lvl:02}.png")
+            print(f"{name:8} L{lvl:02} zone {zone_of(lvl)}: {n} frames, "
+                  f"shots {[k for k, _ in tiles]}")
 
 
 if __name__ == "__main__":

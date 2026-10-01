@@ -2312,14 +2312,24 @@ el_dslot:
         ld a,SCREEN_A/256
         ld (draw_page),a
         call draw_tilemap
-        ld a,(shown_r12)        ; then aim drawing at the hidden buffer
+        call aim_hidden         ; then aim drawing at the hidden buffer
+        jp game_loop
+
+; aim_hidden -- once a room is painted into BOTH buffers, point the
+; drawing at whichever one is NOT on screen.  Whoever paints a whole
+; room must end with this: leave draw_page on the shown buffer and the
+; next flip keeps them in step on the WRONG pair, so every sprite is
+; drawn into the picture the beam is reading -- tearing that no
+; emulator without a raster can see.
+aim_hidden:
+        ld a,(shown_r12)
         cp CRTC_R12_A
         ld a,SCREEN_B/256
-        jr z,el_aim
+        jr z,ah_set
         ld a,SCREEN_A/256
-el_aim:
+ah_set:
         ld (draw_page),a
-        jp game_loop
+        ret
 
 ; ----------------------------------------------------------------------
 ; next_level -- the player climbed off the top edge (y < 8)
@@ -2958,8 +2968,10 @@ ue_drone:
         ld (ix+2),a
         cp 184
         jp c,ud_prox
-        ld (ix+0),ET_DYING      ; spent on the deck: a dud
-        ld (ix+8),2
+        ld (ix+0),ET_DYING      ; spent on the deck: a dud -- and a
+        ld (ix+8),2             ; miss you can hear
+        ld a,SFX_STEP
+        call sfx_start
         jp ue_next
 ud_hunt:
         ld a,(ix+7)             ; sideways drift every other frame:
@@ -3297,6 +3309,8 @@ sd_found:
 arch_scan:
         xor a
         ld (mg_flag),a          ; a fresh level re-arms the doors
+        ld (mg_range),a         ; ...and drops any show's house rules:
+        ld (mg_drill),a         ; a game over inside one skips mg_room
         ld (arch_count),a
         ld hl,(current_map)
         ld c,0                  ; C = map row
@@ -3598,14 +3612,24 @@ mr_prop:
         add hl,de
         ld de,(current_map)
         add hl,de
+        ld de,1                 ; rightwards...
+        bit 7,b
+        jr z,mr_run
+        res 7,b                 ; ...or, with the top bit of the run
+        ld e,20                 ; length set, straight down the map
 mr_run:
         ld (hl),c
-        inc hl
+        add hl,de
         djnz mr_run
         pop hl
         jr mr_prop
 mr_rects:
         ld de,(current_rects)
+        push hl                 ; every set stands on the same deck,
+        ld hl,mr_deck           ; so it is laid once here instead of
+        ld bc,5                 ; in all seven records
+        ldir
+        pop hl
 mr_rc:
         ld a,(hl)
         ld (de),a
@@ -3647,7 +3671,11 @@ mr_pool:
         call draw_tilemap
         ld a,SCREEN_A/256
         ld (draw_page),a
-        jp draw_tilemap
+        call draw_tilemap
+        call mg_unseen          ; the top line is blank again
+        jp aim_hidden           ; (it used to stay on #C0 whatever showed)
+
+mr_deck:        defb 0,80,192,8,1
 
 ; mg_frame -- the shared per-frame head of every show's loop.  ESC
 ; walks out of any of them: the card, the game, the verdict.  The
@@ -3661,6 +3689,7 @@ mg_frame:
         ld a,(key_matrix+8)     ; ESC sits beside Z on line 8
         bit 2,a
         jp z,mg_exit            ; (active low: 0 = pressed)
+        call mg_vit             ; energy and lives, when they change
         jp sfx_update
 
 ; add_energy -- A points; past a full tank they bank a life (cap 9)
@@ -3685,9 +3714,20 @@ ae_fits:
         ret
 
 ; mg_verdict -- HL = the closing line; hold it up, then leave.
-mg_verdict:
+mg_good:                        ; the line in green: he earned it
+        ld a,9
+        jr mgv
+mg_bad:                         ; ...in red: it went wrong
+        ld a,5
+        jr mgv
+mg_verdict:                     ; ...or plain yellow: neither
+        ld a,7
+mgv:
+        ld (mg_pen),a
         push hl
-        ld b,90                 ; a settling breath
+        call render_entities    ; bring the hidden page up to the last
+        call mg_sync            ; move, then make it the ONLY picture
+        ld b,40                 ; a settling breath
 mv_wait:
         push bc
         call mg_frame
@@ -3695,24 +3735,152 @@ mv_wait:
         djnz mv_wait
         pop hl
 mg_say:                         ; ...or speak at once, with no wait
-        push hl
-        ld b,4                  ; into the hidden buffer...
-        ld c,96
-        ld e,7
-        call draw_text_narrow
-        call mg_frame           ; ...flip it into view...
-        pop hl
-        ld b,4                  ; ...and match the other one
-        ld c,96
-        ld e,7
-        call draw_text_narrow
+        ld c,3                  ; centred on row 5: the one row every
+        call mg_mid             ; set keeps clear between its walls
+        ld c,40
+        ld a,(mg_pen)
+        ld e,a
+        call draw_text_narrow   ; once, into the hidden page...
+        call mg_sync            ; ...and the same picture in both
         ld b,150                ; three seconds to read it
 mv_hold:
         push bc
         call mg_frame
         pop bc
+        ld a,b                  ; after the first second, SPACE or Z
+        cp 100                  ; takes him home at once
+        jr nc,mv_n
+        ld a,(input_new)
+        and #30
+        jp nz,mg_exit
+mv_n:
         djnz mv_hold
         jp mg_exit
+
+; mg_sync -- copy the page being drawn over the other one.  A frozen
+; picture has to be ONE picture: the verdict used to flip for nearly
+; five seconds between two pages that differed by a clock digit, a
+; tally (11 against 12) or a sprite's stride -- a 25 Hz shimmer.
+mg_sync:
+        ld a,(draw_page)
+        ld h,a
+        xor #80
+        ld d,a
+        xor a
+        ld l,a
+        ld e,a
+        ld bc,#4000
+        ldir
+        ret
+
+; mg_mid -- HL = a string, C = bytes per glyph: B = the column that
+; centres it on the 80-byte line.  HL is kept.
+mg_mid:
+        push hl
+        ld b,0
+mgm_len:
+        ld a,(hl)
+        or a
+        jr z,mgm_got
+        inc b
+        inc hl
+        jr mgm_len
+mgm_got:
+        xor a
+mgm_mul:
+        add a,c
+        djnz mgm_mul            ; A = glyph width x length (never 0)
+        neg
+        add a,80                ; what is left of the line...
+        srl a                   ; ...split either side
+        ld b,a
+        pop hl
+        ret
+
+; mg_fresh -- HL -> {shown, owed}, A = the figure now.  A new figure
+; owes a paint to both pages.  NC: paint it (this page is paid for);
+; C: nothing owed, leave the screen alone.
+mg_fresh:
+        cp (hl)
+        jr z,mf_same
+        ld (hl),a
+        inc hl
+        ld (hl),2
+        dec hl
+mf_same:
+        inc hl
+        ld a,(hl)
+        or a
+        scf
+        ret z
+        dec (hl)
+        or a
+        ret
+
+; mg_unseen -- forget what the readouts showed: whoever blanks the top
+; line (a fresh set, a card) must make them all paint again.
+mg_unseen:
+        ld hl,mg_seen
+        ld b,6
+mus_l:
+        ld (hl),#FF
+        inc hl
+        djnz mus_l
+        ret
+
+; mg_owe -- A = the quota: show what is still OWED, counting down to 00
+; at the quota, so the berth opens on the card's own number.
+mg_owe:
+        ld hl,mg_e
+        sub (hl)
+        jr nc,mg_tally
+        xor a
+mg_tally:                       ; A = the figure, DE = its icon
+        push de
+        ld c,2
+        call mg_pair_at
+        pop de
+        ld bc,#0C00             ; the icon beside it, every frame --
+        jp draw_sprite_8x16     ; things in flight cross its second row
+
+; mg_vit -- energy and lives on the top line of every show, in the
+; shaft's own glyphs, painted once per page when either changes.
+mg_vit:
+        ld a,(player_energy)
+        add a,a
+        add a,a
+        add a,a
+        add a,a
+        ld hl,game_lives
+        add a,(hl)              ; the key: energy*16 + lives
+        ld hl,mg_seen+4
+        call mg_fresh
+        ret c
+        push ix                 ; (draw_char walks the font with IX)
+        ld a,GLYPH_BOLT
+        ld b,44
+        ld c,0
+        ld e,7
+        call draw_char
+        ld a,(player_energy)
+        and #0F
+        ld b,48
+        ld c,0
+        ld e,7
+        call draw_char
+        ld a,GLYPH_HEART
+        ld b,52
+        ld c,0
+        ld e,5
+        call draw_char
+        ld a,(game_lives)
+        and #0F
+        ld b,56
+        ld c,0
+        ld e,5
+        call draw_char
+        pop ix
+        ret
 
 ; rnd8 -- 8-bit Galois LFSR (poly #1D), period 255.  Seeded per level
 ; from the 300 Hz clock, so no two runs share a sky.  Trashes only A.
@@ -5881,6 +6049,9 @@ mg_brf:         defw 0          ; the briefing card being shown
 mg_brf2:        defw 0          ; ...and the line cursor into it
 mg_brc:         defb 0          ; the next rule line's scanline
 mg_col:         defw 0          ; a readout's value and byte column
+mg_pen:         defb 7          ; the verdict line's ink
+mg_seen:        defs 6,#FF      ; {shown, pages owed} x the left berth,
+                                ; the right berth and the vitals
 mg_fl:          defw 0          ; the crane's shout: what it dredged up
 mg_flt:         defb 0          ; ...and how long it hangs there
 mix_a:          defb 9          ; channel A's mixer claim (tone/noise)
@@ -5950,6 +6121,157 @@ level_buffer:   defs 768,0
 prev_pos:       defb 38,176     ; where the player was drawn in buffer B
                 defb 38,176     ; ... and in buffer A
 key_matrix:     defs 10,#FF     ; raw matrix rows (active low, #FF = idle)
+
+; ----------------------------------------------------------------------
+; The side-shows' sets and briefing cards.  They used to ride on the
+; #A600 shelf with the shows' code; read-only data needs no particular
+; home, and here it sits in padding the load image carries anyway --
+; so the move costs the disc file nothing and gives the shelf, where
+; every show's code has to live, 642 bytes back.
+; ----------------------------------------------------------------------
+; --- the seven sets ---------------------------------------------------
+; room format: player_x, player_y, floor tile,
+;              (tile, col, row, run)* #FF, (x,w,y,h,type)* #FF
+; A run goes right; with #80 added to its length it goes DOWN.  The
+; deck rect (0,80,192,8,1) is laid by mg_room for every set, so the
+; rect list holds only what a set adds to it.
+room_tapper:
+        defb 64,176, 3
+        defb 5,4,3,12                   ; the ration shelf: twelve tins, and
+                                        ; one leaves it with every serve
+        defb 38,0,7,20                  ; the ceiling main...
+        defb 15,5,8,1, 15,12,8,1        ; ...and its lamps
+        defb 2,0,18,20          ; wall to wall: the queue spawns at the
+        defb 2,0,12,20          ; left end, and it must have deck to tread
+        defb 15,8,13,1, 15,8,19,1       ; a lamp under each counter
+        defb 4,16,12,#8C                ; the service ladder he works from
+        defb 54,0,10,1, 13,0,11,1       ; a door at the head of each
+        defb 54,0,16,1, 13,0,17,1       ; queue, so they come FROM
+        defb 54,0,22,1, 13,0,23,1       ; somewhere
+        defb 5,18,22,2, 5,18,23,2       ; back of house
+        defb #FF                        ; (rows 4-6 stay clear: the
+        defb #FF                        ;  verdict is said on row 5)
+room_moles:
+        defb 26,176, 3          ; between hatches, not in front of one
+        defb 1,0,1,#97, 1,19,1,#97      ; the gallery walls
+        defb 38,1,18,18                 ; the manifold...
+        defb 41,1,18,1, 42,18,18,1      ; ...its collars...
+        defb 39,4,18,1, 39,9,18,1       ; ...and a tee over each
+        defb 39,14,18,1                 ; standpipe
+        defb 6,4,19,#85, 6,9,19,#85     ; the standpipes the rats live in
+        defb 6,14,19,#85
+        defb 15,6,19,1, 15,12,19,1      ; work lights
+        defb 18,17,21,1                 ; the shift board
+        defb 16,4,22,1, 16,9,22,1, 16,14,22,1   ; the hatches, laid last
+        defb 16,4,20,1, 16,9,20,1, 16,14,20,1   ; so they win the pipe
+        defb #FF
+        defb 0,4,8,184,1, 76,4,8,184,1  ; the walls stop him
+        defb #FF
+room_hook:
+        defb 74,176, 3                  ; outside the right post
+        defb 38,0,1,20                  ; the arcade's ceiling main,
+        defb 15,4,2,1, 15,15,2,1        ; and its lamps
+        defb 40,2,15,1, 38,3,15,14, 39,17,15,1  ; the cabinet's lid
+        defb 15,3,16,14                 ; its row of bulbs
+        defb 6,2,16,#88, 6,17,16,#88    ; the two posts
+        defb 41,3,17,1, 38,4,17,12, 42,16,17,1  ; the trolley's rail
+        defb 5,4,23,12                  ; the bin of sealed crates
+        defb 7,3,23,1, 7,16,23,1
+        defb #FF
+        defb #FF
+room_market:
+        defb 40,176, 3
+        defb 22,0,1,20                  ; the ceiling main: the Eye's
+                                        ; colour runs its whole length
+        defb 2,5,8,10                   ; the smuggler's gantry
+        defb 5,5,7,2, 5,13,7,2          ; his stock, either end
+        defb 15,6,2,1, 15,13,2,1        ; lamps
+        defb 58,0,21,1, 13,0,22,#82     ; the security door the coat
+        defb #FF                        ; comes through
+        defb #FF
+room_gallery:
+        defb 38,176, 3
+        defb 16,1,1,18                  ; the vents they are released from
+        defb 1,0,1,#97, 1,19,1,#97      ; the chamber walls
+        defb 18,1,20,1                  ; the range terminal
+        defb 7,1,23,1, 7,18,23,1        ; kerbs
+        defb 7,0,17,#83, 7,19,17,#83    ; the strike band: crack one as it
+                                        ; passes these marks, overhead
+        defb 15,1,2,1, 15,18,2,1        ; lamps
+        defb #FF
+        defb 0,4,8,184,1, 76,4,8,184,1  ; the walls stop him
+        defb #FF
+room_boiler:
+        defb 38,176, 3
+        defb 45,0,1,20, 44,0,1,1        ; the drum's crown (row 0 is
+        defb 47,19,1,1, 46,9,1,1        ; the readouts' line)
+        defb 5,2,2,16
+        defb 5,2,3,16
+        defb 5,2,4,16
+        defb 1,1,2,#96, 1,18,2,#96      ; its walls: the slag stays
+        defb #FF                        ; under the crust, never up
+        defb 0,8,8,184,1, 72,8,8,184,1  ; a gutter beside it
+        defb #FF
+room_firing:
+        defb 38,176, 3
+        defb 2,0,1,20                   ; a slab ceiling
+        defb 15,5,2,1, 15,14,2,1        ; range lamps
+        defb 1,0,2,#93, 1,19,2,#93      ; walls, stopping above the guns
+        defb 38,1,7,18                  ; the target rail...
+        defb 37,3,8,1, 37,7,8,1         ; ...and its paper men
+        defb 37,12,8,1, 37,16,8,1
+        defb 54,9,3,2                   ; the sheet's light: green, clean
+        defb 45,0,21,1, 45,19,21,1      ; a gun at each end: housing...
+        defb 41,0,22,#82, 42,19,22,#82  ; ...and two mouths, high and low
+        defb #FF                        ; (rows 18-23 stay dark: the
+        defb #FF                        ;  white rounds must stand out)
+
+; --- the briefing cards -----------------------------------------------
+; A title and two rules apiece: what the job is, and the one thing
+; that ends it badly.
+txt_mg_go:      defb "SPACE TO START",0
+txt_mg_esc:     defb "ESC LEAVES - ONE GO ONLY",0
+; Every rule below was checked against the show's code: the goal, the
+; way it ends badly, and what it actually pays.
+brf_tapper:     defw txt_bt1,txt_bt2,txt_bt3,txt_bt4,txt_bt5,0
+txt_bt1:        defb "CANTEEN",0
+txt_bt2:        defb "UP DOWN PICK A COUNTER",0
+txt_bt3:        defb "Z SERVES - SERVE ALL 12",0
+txt_bt4:        defb "LET ONE THROUGH - REPORTED",0
+txt_bt5:        defb "NO TIN WASTED - A LIFE",0
+brf_moles:      defw txt_bm1,txt_bm2,txt_bm4,txt_bm3,txt_bm5,0
+txt_bm1:        defb "RAT SHIFT",0
+txt_bm2:        defb "WHIP 15 RATS IN 60 SEC",0
+txt_bm4:        defb "UP AND Z - TOP HATCHES",0
+txt_bm3:        defb "SPARE THE WHITE ONE",0
+txt_bm5:        defb "QUOTA PAYS ENERGY",0
+brf_hook:       defw txt_bh1,txt_bh2,txt_bh3,txt_bh4,txt_bh5,0
+txt_bh1:        defb "THE HOOK",0
+txt_bh2:        defb "50 POINTS BUYS 3 DROPS",0
+txt_bh3:        defb "SPACE DROPS THE HOOK",0
+txt_bh4:        defb "AIM DEAD CENTRE ON A CRATE",0
+txt_bh5:        defb "DOWN WALKS AWAY",0
+brf_market:     defw txt_bk1,txt_bk2,txt_bk3,txt_bk4,0
+txt_bk1:        defb "MARKET",0
+txt_bk2:        defb "CATCH THE FALLING STOCK",0
+txt_bk3:        defb "RED DRIPS - STAND STILL",0
+txt_bk4:        defb "EVERY THIRD PAYS ENERGY",0
+brf_gallery:    defw txt_bg1,txt_bg2,txt_bg3,txt_bg4,txt_bg5,0
+txt_bg1:        defb "DRONES",0
+txt_bg2:        defb "WHIP 8 DRONES IN 60 SEC",0
+txt_bg3:        defb "UP AND Z CRACKS OVERHEAD",0
+txt_bg4:        defb "TOUCH ONE AND IT STINGS",0
+txt_bg5:        defb "QUOTA PAYS 500 AND ENERGY",0
+brf_boiler:     defw txt_bb1,txt_bb4,txt_bb2,txt_bb3,txt_bb5,0
+txt_bb1:        defb "BOILER",0
+txt_bb4:        defb "CHIP OFF ALL THE SCALE",0
+txt_bb2:        defb "Z AND UP BATS IT BACK",0
+txt_bb3:        defb "3 ON THE FLOOR AND OUT",0
+txt_bb5:        defb "EVERY 16 CHIPS PAYS ENERGY",0
+brf_firing:     defw txt_bf1,txt_bf2,txt_bf3,txt_mg_clean,0
+txt_bf1:        defb "FIRING",0
+txt_bf2:        defb "DUCK HIGH - JUMP LOW",0
+txt_bf3:        defb "PAINT ROUNDS - 45 SEC",0
 
         ; keep everything below the #4000 screen buffer
         assert $ < SCREEN_B
@@ -6140,6 +6462,15 @@ mg_pair_at:                     ; ...or at byte column C
         ld (mg_col),a
         ld a,c
         ld (mg_col+1),a
+        ld hl,mg_seen           ; the left berth's memory...
+        bit 6,c
+        jr z,mpa_c
+        inc hl                  ; ...or the right one's (C = 66)
+        inc hl
+mpa_c:
+        ld a,(mg_col)
+        call mg_fresh           ; unchanged and already in both pages:
+        ret c                   ; leave it (it cost ~3 ms every frame)
         xor a                   ; a show's readouts live on the top
         ld (seg_top),a          ; line, clear of everything in flight
         push af
@@ -6199,17 +6530,23 @@ mb_wait:
         ret
 
 mb_draw:
+        call mg_unseen          ; clear_page took the top line with it
         ld hl,(mg_brf)
         ld e,(hl)
         inc hl
         ld d,(hl)
         inc hl
         ld (mg_brf2),hl
-        ex de,hl                ; the title, in the big yellow font
-        ld b,4
+        ex de,hl                ; the title, in the big yellow font,
+        ld c,8                  ; centred
+        call mg_mid
         ld c,24
         ld e,7
         call draw_text_2x
+        ld a,#0C                ; a steel rule under it
+        ld bc,8*256+48
+        ld de,64*256+1
+        call fill_rect
         ld a,72
         ld (mg_brc),a
 mb_l:
@@ -6223,7 +6560,8 @@ mb_l:
         or e
         jr z,mb_end
         ex de,hl                ; a rule line, narrow and white
-        ld b,2
+        ld c,3
+        call mg_mid
         ld a,(mg_brc)
         ld c,a
         ld e,1
@@ -6234,9 +6572,16 @@ mb_l:
         jr mb_l
 mb_end:
         ld hl,txt_mg_go
-        ld b,10
+        ld c,3
+        call mg_mid
         ld c,168
-        ld e,6                  ; the prompt, in orange
+        ld e,9                  ; the prompt in green: pen 9 is #52 on
+        call draw_text_narrow   ; every floor, where pen 6 went dark
+        ld hl,txt_mg_esc        ; blue on the admin tiers
+        ld c,3
+        call mg_mid
+        ld c,184
+        ld e,2                  ; and the way out, quietly, in steel
         jp draw_text_narrow
 
 ; mg_boxhit -- the whip box B,C,D,E against a 4x8 body at H(x),L(y).
@@ -6464,16 +6809,18 @@ tp_gl:
         jr c,tp_gn
         call take_hit           ; he reached the counter: reported
         ld hl,txt_mg_report
-        jp mg_verdict
+        jp mg_bad
 tp_leave:
         ld a,(frame_ctr)        ; served: he strides out briskly
         and 1
         jr nz,tp_gn
-        dec (ix+1)
-        dec (ix+1)
         ld a,(ix+1)
+        sub 2                   ; (served in the doorway, at x 0-1, he
+        jr c,tp_out             ; must not wrap round to 255 and stride
+        ld (ix+1),a             ; on, drawn past the screen's end)
         cp 4
         jr nc,tp_gn
+tp_out:
         ld (ix+0),ET_DYING
         ld (ix+8),2
 tp_gn:
@@ -6490,17 +6837,19 @@ tp_gn:
         ld a,(ix+1)
         cp 4
         jr nc,tp_hitq
-        ld (ix+0),ET_DYING      ; off the end: a wasted ration
-        ld (ix+8),2
+        ld (ix+0),ET_DYING      ; off the end: a wasted ration --
+        ld (ix+8),2             ; and you hear it go
         ld hl,mg_f
         inc (hl)
+        ld a,SFX_HIT
+        call sfx_start
         jr tp_serve
 tp_hitq:
         call tp_meet
 tp_serve:
-        ld a,(input_new)        ; Z slings a tin down this counter
-        bit INP_ACT,a
-        jr z,tp_draw
+        ld a,(input_new)        ; Z slings a tin down this counter (and
+        and #30                 ; so does SPACE: he cannot jump here,
+        jr z,tp_draw            ; and a dead key is a confusing one)
         ld ix,entities+3*ENT_SIZE
         ld a,(ix+0)
         or a
@@ -6518,8 +6867,9 @@ tp_serve:
 tp_draw:
         call render_entities
         call mg_reap
-        ld a,(mg_e)             ; the tally on the berth
-        call mg_pair
+        ld a,12                 ; tins still owed, on the left berth
+        ld de,spr_rock          ; like every show's count
+        call mg_owe
         ld a,(mg_e)
         cp 12
         jp c,tp_loop
@@ -6528,7 +6878,7 @@ tp_draw:
         jr nz,tp_ok
         call mg_life
         ld hl,txt_mg_shift1
-        jp mg_verdict
+        jp mg_good
 tp_ok:
         ld hl,txt_mg_shift2
         jp mg_verdict
@@ -6560,7 +6910,7 @@ tps_l:
         ret                     ; queue full: he waits outside
 tps_f:
         ld (ix+0),ET_RIOT
-        ld (ix+1),4
+        ld (ix+1),0             ; out of the doorway
         call rnd8
 tps_m:
         sub 3
@@ -6598,6 +6948,13 @@ tpm_l:
         ld (ix+8),2
         ld hl,mg_e
         inc (hl)
+        ld a,(hl)               ; and one tin leaves the shelf, in both
+        add a,3                 ; pages: serve k empties column k+3
+        ld d,a
+        ld e,3
+        call map_cell_addr
+        ld (hl),0
+        call redraw_cell_both
         ld a,5
         call score_add
         ld a,SFX_PING
@@ -6655,13 +7012,14 @@ mm_np:
         call render_entities
         call mm_show            ; rats over everything, every frame
         call mg_clock           ; the seconds, right
-        ld a,(mg_e)             ; the tally, left, beside a rat so it
-        ld c,2                  ; needs no caption
-        call mg_pair_at
-        ld b,12
-        ld c,0
-        ld de,spr_rat_a
-        call draw_sprite_8x16
+        ld a,(mg_f)             ; the rats still owed, left, beside a
+        or a                    ; rat -- a white one once the bonus is
+        ld de,spr_rat_a         ; void, so the cost shows when it is
+        jr z,mm_icon            ; paid
+        ld de,spr_rat_w
+mm_icon:
+        ld a,15                 ; 15 on the card, 15 on the wall, 00
+        call mg_owe             ; when the quota is met
         ld a,(mg_sec)
         or a
         jp nz,mm_loop
@@ -6669,7 +7027,7 @@ mm_np:
         or a
         jr z,mm_fair
         ld hl,txt_mg_voided
-        jp mg_verdict
+        jp mg_bad
 mm_fair:
         ld a,(mg_e)
         cp 15
@@ -6677,10 +7035,10 @@ mm_fair:
         ld a,1
         call add_energy
         ld hl,txt_mg_quota
-        jp mg_verdict
+        jp mg_good
 mm_short:
         ld hl,txt_mg_missed
-        jp mg_verdict
+        jp mg_bad
 
 mm_new:                         ; a nose at a random shut hatch
         call rnd8
@@ -6709,13 +7067,35 @@ mmn_k:
         ret
 
 mm_age:                         ; timers down; it ducks back at zero
-        ld hl,mg_tab12
-        ld b,6
-mma_l:
+        ld hl,mg_tab12          ; A shut hatch's second byte is a wipe
+        ld b,6                  ; countdown: 2 when it closes, so its
+mma_l:                          ; grate goes back once per page and then
+        ld a,(hl)               ; is left alone -- repainting every shut
+        or a                    ; hatch every frame painted it over the
+        jr z,mma_shut           ; mechanic standing in front of it
+        dec (hl)
+        jr nz,mma_n
+        inc hl                  ; it just ducked: wipe it, both pages
+        ld (hl),2
+        dec hl
+        jr mma_n
+mma_shut:
+        inc hl
         ld a,(hl)
+        dec hl
         or a
         jr z,mma_n
+        inc hl
         dec (hl)
+        dec hl
+        push hl
+        push bc
+        ld a,6
+        sub b                   ; hatch index
+        call mm_at
+        call restore_tiles
+        pop bc
+        pop hl
 mma_n:
         inc hl
         inc hl
@@ -6734,7 +7114,7 @@ mms_l:
         inc h
         ld a,(hl)
         or a
-        jr z,mms_shut
+        jr z,mms_n              ; shut: mm_age looks after its grate
         inc hl
         ld a,(hl)
         or a
@@ -6748,13 +7128,6 @@ mms_d:
         call mm_at
         pop de
         call draw_sprite_8x16
-        pop bc
-        jr mms_n
-mms_shut:
-        push bc
-        ld a,c
-        call mm_at
-        call restore_tiles
         pop bc
 mms_n:
         inc c
@@ -6795,7 +7168,9 @@ mmc_l:
         ld a,c
         call mm_at
         ld h,b
-        ld l,c
+        ld a,c                  ; the body sits two lines into the
+        add a,2                 ; sprite: aimed there, a side crack
+        ld l,a                  ; takes the low rat, not both
         call mg_unpark
         call mg_boxhit
         jr nc,mmc_n
@@ -6818,21 +7193,29 @@ mm_hit:                         ; hatch A: the whip found a nose
         ld l,a
         jr nc,$+3
         inc h
-        ld (hl),0
+        ld (hl),0               ; shut...
         inc hl
         ld a,(hl)
+        ld (hl),2               ; ...and wiped from both pages
         or a
         jr nz,mmh_white
         ld hl,mg_e
         inc (hl)
+        ld a,(hl)
+        cp 15                   ; the fifteenth rings a different bell:
+        ld a,SFX_PING           ; the quota is made
+        jr z,mmh_snd
+        ld a,SFX_KILL
+mmh_snd:
+        push af
         ld a,2
         call score_add
-        ld a,SFX_KILL
+        pop af
         jp sfx_start
 mmh_white:
-        ld a,1                  ; the Broadcast is displeased
-        ld (mg_f),a
-        ld a,SFX_PING
+        ld a,1                  ; the Broadcast is displeased -- and the
+        ld (mg_f),a             ; rat beside the count turns white NOW,
+        ld a,SFX_HIT            ; not forty seconds later at the verdict
         jp sfx_start
 
 mm_spots:                       ; the six hatches: byte column, y
@@ -6853,17 +7236,27 @@ mg_hook:
         endif
         call mg_take50
         jr nc,hk_paid
-        ld hl,txt_mg_poor
+        ld a,(mg_marq)          ; no stake, no turn: "come back" has to
+        call mg_showbit         ; be true, so this door is NOT spent
+        cpl
+        and (hl)
+        ld (hl),a
+        call clear_page         ; and the refusal replaces the card
+        ld a,5                  ; (in red)
+        ld (mg_pen),a
+        ld hl,txt_mg_poor       ; instead of landing on top of it
         jp mg_say               ; a shaken head needs no dramatic pause
 hk_paid:
         ld hl,room_hook
         call mg_room
+        ld a,1                  ; facing the machine, not the wall
+        ld (player_facing),a
         ld hl,spr_hook
         ld (mg_spr),hl
         ld ix,entities          ; slot 0: the hook itself
         ld (ix+0),ET_MGSPR
-        ld (ix+1),20
-        ld (ix+2),140
+        ld (ix+1),18            ; off a crate: SPACE-SPACE off the card
+        ld (ix+2),140           ; must not be a free bullseye
         ld (ix+7),0
         ld a,3
         ld (mg_a),a             ; drops left
@@ -6889,8 +7282,7 @@ hk_loop:
         xor a
         ld (mg_d),a
         ld a,(mg_a)
-        dec a
-        ld (mg_a),a
+        or a
         jr nz,hk_draw
         ld hl,txt_mg_house      ; the chain man takes the crane back
         jp mg_verdict
@@ -6920,6 +7312,8 @@ hks_f:
         jr z,hks_q
         ld a,1
         ld (mg_d),a
+        ld hl,mg_a              ; that drop is spent the moment it
+        dec (hl)                ; goes, so the berth reads what is LEFT
         ld a,SFX_WHIP
         call sfx_start
         jr hk_draw
@@ -6940,8 +7334,21 @@ hk_drop:
         ld (mg_d),a
 hk_draw:
         call render_entities
-        ld a,(mg_a)             ; drops left on the berth
-        call mg_pair
+        ld a,(entities+2)       ; the cable, rail to claw: y is always
+        sub 143                 ; even, so never a 0-line (256) fill
+        jr c,hk_tally
+        ld e,a
+        ld a,(entities+1)
+        inc a
+        ld b,a                  ; the stem's byte column, and #04 is
+        ld c,143                ; pen 2 in its right pixel -- the
+        ld d,1                  ; restore under the claw takes it back
+        ld a,#04                ; up as the claw climbs
+        call fill_rect
+hk_tally:
+        ld a,(mg_a)             ; drops left, on the left berth
+        ld de,spr_hook
+        call mg_tally
         ld a,(mg_flt)           ; ...and what the last drop dredged up
         or a
         jp z,hk_loop
@@ -6950,24 +7357,26 @@ hk_draw:
         cp 2
         jr nc,hk_flash
         xor a                   ; the last two frames wipe the word
-        ld b,20                 ; out of BOTH buffers
-        ld c,0
-        ld d,40
+        ld b,12                 ; out of BOTH buffers: 17 centred
+        ld c,112                ; glyphs start at 14 and end at 65
+        ld d,56
         ld e,8
         call fill_rect
         jp hk_loop
 hk_flash:
         ld hl,(mg_fl)
-        ld b,20
-        ld c,0
-        ld e,7
+        ld c,3
+        call mg_mid
+        ld c,112                ; row 14: over the cabinet, clear of
+        ld e,7                  ; the readouts on the top line
         call draw_text_narrow
         jp hk_loop
 
 hk_prize:                       ; where it landed decides the odds
-        ld a,(ix+1)
-        dec a
-        and 3
+        ld a,(ix+1)             ; the claw's tip is bytes 1-2 of its
+        and 3                   ; sprite: over a crate's middle when
+                                ; x mod 4 = 0 (a 'dec a' here paid the
+                                ; good odds one byte to the right)
         jr z,hkp_clean
         call rnd8               ; sloppy: mostly scrap
         cp 40
@@ -7025,6 +7434,7 @@ mg_market:
         ld (ix+0),ET_THROW
         ld (ix+1),36
         ld (ix+2),48
+        ld (ix+4),86            ; (it held whatever the shaft left there)
         ld (ix+7),0
         xor a
         ld (mg_a),a             ; phase: 0 white, 1 red
@@ -7043,14 +7453,23 @@ mg_market:
 mk_loop:
         call mg_frame
         call update_player
-        ld ix,entities          ; the gantry man never throws his own
-        ld (ix+8),100
+        ld ix,entities          ; the gantry man never throws his own,
+        ld a,(mg_c)             ; but his arm goes up with each bundle
+        add a,16                ; he lets go: 86 - (next + 16) < 16
+        ld (ix+8),a             ; for the frames just after a drop
+        ld hl,mg_c              ; the stock FIRST: a package let go
+        dec (hl)                ; this frame is already in the air when
+        jr nz,mk_nostock        ; the eye below asks, so it holds the
+        ld (hl),70              ; flip until that package lands
+        call mk_package
+mk_nostock:
         ld hl,mg_b              ; the eye's phases...
         dec (hl)
         jr nz,mk_ph
         call mk_falling         ; ...held while stock is mid-air
         jr z,mk_flip
-        inc (hl)
+        ld hl,mg_b              ; (mk_falling walked HL into the pool:
+        inc (hl)                ;  one more frame, then ask again)
         jr mk_ph
 mk_flip:
         ld a,(mg_a)
@@ -7061,28 +7480,37 @@ mk_flip:
         or a
         ld a,140                ; white: long and generous
         jr z,mk_pt
-        ld a,90                 ; red: a held breath
+        ld a,(mg_f)             ; red: first a moment to STOP -- a man
+        or a                    ; mid-stride as it turns was caught
+        jr nz,mk_red            ; with no time to react at all
+        ld a,-32
+        ld (mg_f),a
+mk_red:
+        ld a,90                 ; ...then a held breath
 mk_pt:
-        ld (hl),a
+        ld (mg_b),a             ; NOT through HL: a cell redraw leaves HL
+                                ; inside the tileset, and storing there
+                                ; scribbled 90/140 into tile graphics
+        call mk_drip            ; and a drop in the new colour at once
 mk_ph:
         ld hl,mg_d              ; the telegraph drips
         dec (hl)
-        jr nz,mk_dr
+        jr nz,mk_pk
         ld (hl),45
         call mk_drip
-mk_dr:
-        ld hl,mg_c              ; the stock
-        dec (hl)
-        jr nz,mk_pk
-        ld (hl),70
-        call mk_package
 mk_pk:
         ld a,(mg_a)             ; red-phase discipline
         or a
         jr z,mk_upd
-        ld a,(mg_f)
+        ld hl,mg_f              ; 0 armed, 1 sweeping, negative: the
+        ld a,(hl)               ; grace after the flip, counting up
         or a
-        jr nz,mk_upd
+        jr z,mk_look
+        bit 7,a                 ; positive: already sweeping
+        jr z,mk_upd
+        inc (hl)                ; negative: the grace runs on
+        jr mk_upd
+mk_look:
         ld a,(player_moved)
         ld hl,player_state
         or (hl)
@@ -7100,37 +7528,47 @@ mk_upd:
         call c,take_hit
         call render_entities
         call mg_clock
+        ld a,(mg_e)             ; stock caught, beside a bundle
+        ld de,spr_rock
+        call mg_tally
         ld a,(mg_sec)
         or a
         jp nz,mk_loop
         ld hl,txt_mg_sold
         jp mg_verdict
 
-mk_falling:                     ; Z when no package is in the air
+mk_falling:                     ; NZ while a package is in the air
         ld hl,entities+ENT_SIZE
         ld b,MAX_ENTITIES-1
         ld de,ENT_SIZE
 mkf_l:
         ld a,(hl)
         cp ET_PROJ
-        ret z
-        add hl,de
-        djnz mkf_l
+        jr z,mkf_up             ; (a bare 'ret z' here answered Z for
+        add hl,de               ;  "found one" AND for "none", so the
+        djnz mkf_l              ;  flip was never held for anything)
         xor a
         ret
+mkf_up:
+        or a                    ; A = ET_PROJ: NZ
+        ret
 
-mk_paint:                       ; the pipe wears the eye's colour
-        ld hl,(current_map)
-        ld de,22                ; row 1, col 2
-        add hl,de
-        ld a,(mg_a)
+mk_paint:                       ; the ceiling main wears the eye's colour
+        ld de,#1301             ; D = column 19 down to 0, E = row 1.
+mkp_l:                          ; (The redraw takes (col,row): a bare
+        call map_cell_addr      ;  22 once sent it to (0,22), and the
+        ld a,(mg_a)             ;  pipe never changed colour at all.)
         or a
+        ld a,22                 ; leak_white: it is blind
         jr z,mkp_w
-        ld (hl),21              ; leak_red: it is watching
-        jp redraw_cell_both
+        dec a                   ; leak_red: it is watching
 mkp_w:
-        ld (hl),22              ; leak_white: it is blind
-        jp redraw_cell_both
+        ld (hl),a
+        call redraw_cell_both
+        dec d                   ; 19 down to 0: stop when D wraps to #FF
+        bit 7,d
+        jr z,mkp_l
+        ret
 
 mk_slot:                        ; IY = a free pool slot (Z clear: none)
         ld iy,entities+ENT_SIZE
@@ -7258,7 +7696,7 @@ mkw_c:
         cp 70
         ret c
         ld hl,txt_mg_eye        ; the smuggler is long gone
-        jp mg_verdict
+        jp mg_bad
 
 ; ======================================================================
 ; SHOW 4 -- DRONE GALLERY.  Decommissioned kamikazes from the hatches;
@@ -7295,13 +7733,9 @@ gl_nr:
         call update_entities
         call render_entities
         call mg_clock           ; the seconds, right
-        ld a,(mg_e)             ; the tally, left, beside a target
-        ld c,2
-        call mg_pair_at
-        ld b,12
-        ld c,0
-        ld de,spr_drone_a
-        call draw_sprite_8x16
+        ld a,8                  ; the drones still owed, left, beside a
+        ld de,spr_drone_a       ; drone -- the card's 8, down to 00
+        call mg_owe
         ld a,(mg_sec)
         or a
         jp nz,gl_loop
@@ -7324,10 +7758,10 @@ glp_base:
         ld hl,score+1
         call mg_paydig
         ld hl,txt_mg_quota
-        jp mg_verdict
+        jp mg_good
 gl_short:
         ld hl,txt_mg_missed
-        jp mg_verdict
+        jp mg_bad
 
 gl_count:                       ; A = drones aloft
         ld ix,entities
@@ -7368,8 +7802,11 @@ mg_boiler:
         call mg_brief
         ld hl,room_boiler
         call mg_room
+        ld hl,spr_slag          ; red-hot on every floor (pens 5, 7)
+        ld (mg_spr),hl
         ld ix,entities
-        ld (ix+0),ET_PROJ       ; the pellet (the rock IS red-hot)
+        ld (ix+0),ET_MGSPR      ; the pellet (bl_loop never runs
+                                ; update_entities: it never expires)
         ld (ix+1),30
         ld (ix+2),100
         ld (ix+7),0
@@ -7385,9 +7822,9 @@ mg_boiler:
 bl_loop:
         call mg_frame
         call update_player
-        ld a,(whip_timer)
-        cp WHIP_TIME-4
-        call z,bl_crack
+        ld a,(whip_timer)       ; every frame the rope is out, not
+        cp WHIP_TIME-4          ; just one: the swing that looks like
+        call nc,bl_crack        ; a hit IS one
         ld hl,mg_d              ; the slag drifts at half pace: heavy,
         inc (hl)                ; and a man with a whip needs the time
         ld a,(hl)
@@ -7397,12 +7834,12 @@ bl_loop:
         ld a,(mg_b)
         add a,(ix+1)
         ld (ix+1),a
-        cp 2
+        cp 9                    ; the drum's walls
         jr nc,bl_xr
         ld a,1
         ld (mg_b),a
 bl_xr:
-        cp 74
+        cp 69
         jr c,bl_xd
         ld a,#FF
         ld (mg_b),a
@@ -7430,12 +7867,11 @@ bl_yc:
         jr bl_draw
 bl_foul:
         ld hl,txt_mg_foul
-        jp mg_verdict
+        jp mg_bad
 bl_crud:
-        ld a,(mg_c)             ; only a rising pellet chips scale
-        inc a
-        jr nz,bl_draw
-        ld a,(ix+2)
+        ld a,(ix+2)             ; rising OR falling, a pellet entering
+                                ; intact scale chips it -- otherwise
+                                ; slag fell straight through the crust
         srl a
         srl a
         srl a                   ; its row
@@ -7449,6 +7885,7 @@ bl_crud:
         srl a
         srl a                   ; its column
         ld e,a
+        ld b,a                  ; (kept: the redraw wants it in D)
         ld a,c
         add a,a
         add a,a
@@ -7465,7 +7902,9 @@ bl_crud:
         cp 5                    ; scale?
         jr nz,bl_draw
         ld (hl),0               ; chipped clean off
-        call redraw_cell_both
+        ld d,b                  ; D = column, E = row: DE still held
+        ld e,c                  ; current_map, so the redraw was off the
+        call redraw_cell_both   ; map and the crate half-stayed
         ld a,1
         ld (mg_c),a
         ld a,2
@@ -7484,16 +7923,20 @@ bl_crud:
         call sfx_start
 bl_draw:
         call render_entities
+        ld a,(mg_a)             ; spare pellets, on the left berth
+        dec a
+        ld de,spr_slag
+        call mg_tally
         jp bl_loop
 bl_clean:
         ld a,1
         call add_energy
         ld hl,txt_mg_clear
-        jp mg_verdict
+        jp mg_good
 
-bl_crack:                       ; the overhead whip returns the pellet
-        ld a,(whip_dir)
-        dec a
+bl_crack:                       ; any crack returns a FALLING pellet
+        ld a,(mg_c)             ; (once: it is rising after, so one
+        dec a                   ; ping a swing)
         ret nz
         call whip_box
         ret nc
@@ -7554,6 +7997,21 @@ fl_sp:
         call fl_salvo
 fl_ns:
         call update_entities
+        ld a,(mg_f)             ; the first mark turns the sheet's light
+        or a                    ; red, once, in both pages
+        jr z,fl_lit
+        ld de,9*256+3
+        call map_cell_addr
+        ld a,58
+        cp (hl)
+        jr z,fl_lit
+        ld (hl),a
+        inc hl
+        ld (hl),a
+        call redraw_cell_both
+        inc d
+        call redraw_cell_both
+fl_lit:
         call render_entities
         call mg_clock
         ld a,(mg_sec)
@@ -7564,7 +8022,7 @@ fl_ns:
         jr nz,fl_pay
         call mg_life
         ld hl,txt_mg_clean
-        jp mg_verdict
+        jp mg_good
 fl_pay:
         ld a,1
         call add_energy
@@ -7596,126 +8054,36 @@ fls_r:
         ld (iy+3),#FF
 fls_h:
         ld a,181                ; gun height: duck or slide under
-        bit 1,c
+        bit 6,c                 ; (bit 1 of a Galois step IS the last
+                                ;  call's bit 0 -- the previous side)
         jr z,fls_y
         ld a,188                ; shin height: jump it
 fls_y:
         ld (iy+2),a
         ld (iy+7),0
-        ret
+        ld a,SFX_WHIP           ; a shot you hear
+        jp sfx_start
 
-; --- the seven sets ---------------------------------------------------
-; room format: player_x, player_y, floor tile,
-;              (tile, col, row, run)* #FF, (x,w,y,h,type)* #FF
-room_tapper:
-        defb 64,176, 3
-        defb 2,2,18,15
-        defb 2,2,12,15
-        defb 4,15,12,1, 4,15,13,1, 4,15,14,1
-        defb 4,15,18,1, 4,15,19,1, 4,15,20,1
-        defb 16,1,4,3
-        defb #FF
-        defb 0,80,192,8,1
-        defb #FF
-room_moles:
-        defb 34,176, 3
-        defb 16,4,22,1, 16,9,22,1, 16,14,22,1
-        defb 16,4,20,1, 16,9,20,1, 16,14,20,1
-        defb 18,1,2,1
-        defb #FF
-        defb 0,80,192,8,1
-        defb #FF
-room_hook:
-        defb 70,176, 3
-        defb 38,3,17,14
-        defb 5,4,23,12
-        defb 7,3,23,1, 7,16,23,1
-        defb #FF
-        defb 0,80,192,8,1
-        defb #FF
-room_market:
-        defb 40,176, 3
-        defb 2,5,8,10
-        defb 22,2,1,1
-        defb #FF
-        defb 0,80,192,8,1
-        defb #FF
-room_gallery:
-        defb 38,176, 3
-        defb 18,1,20,1
-        defb 7,0,23,2, 7,18,23,2
-        defb #FF
-        defb 0,80,192,8,1
-        defb #FF
-room_boiler:
-        defb 38,176, 3
-        defb 1,0,0,20, 1,0,1,20
-        defb 5,2,2,16
-        defb 5,2,3,16
-        defb 5,2,4,16
-        defb #FF
-        defb 0,80,192,8,1
-        defb #FF
-room_firing:
-        defb 38,176, 3
-        defb 7,0,21,1, 7,19,21,1
-        defb 7,0,22,1, 7,19,22,1
-        defb #FF
-        defb 0,80,192,8,1
-        defb #FF
-
-; --- the briefing cards -----------------------------------------------
-; A title and two rules apiece: what the job is, and the one thing
-; that ends it badly.
-txt_mg_go:      defb "SPACE TO START",0
-brf_tapper:     defw txt_bt1,txt_bt2,txt_bt3,0
-txt_bt1:        defb "CANTEEN",0
-txt_bt2:        defb "UP DOWN PICK A COUNTER",0
-txt_bt3:        defb "Z SERVES - SERVE ALL 12",0
-brf_moles:      defw txt_bm1,txt_bm2,txt_bm3,0
-txt_bm1:        defb "RAT SHIFT",0
-txt_bm2:        defb "WHIP 15 RATS IN 60 SEC",0
-txt_bm3:        defb "SPARE THE WHITE ONE",0
-brf_hook:       defw txt_bh1,txt_bh2,txt_bh3,0
-txt_bh1:        defb "THE HOOK",0
-txt_bh2:        defb "50 POINTS - 3 DROPS",0
-txt_bh3:        defb "FIRE DROPS - DOWN LEAVES",0
-brf_market:     defw txt_bk1,txt_bk2,txt_bk3,0
-txt_bk1:        defb "MARKET",0
-txt_bk2:        defb "CATCH WHILE DRIPS RUN",0
-txt_bk3:        defb "WHITE - RED FREEZE",0
-brf_gallery:    defw txt_bg1,txt_bg2,txt_bg3,0
-txt_bg1:        defb "DRONES",0
-txt_bg2:        defb "WHIP 8 DRONES IN 60 SEC",0
-txt_bg3:        defb "THEY DROP - GET UNDER",0
-brf_boiler:     defw txt_bb1,txt_bb2,txt_bb3,0
-txt_bb1:        defb "BOILER",0
-txt_bb2:        defb "Z AND UP BATS IT BACK",0
-txt_bb3:        defb "3 ON THE FLOOR AND OUT",0
-brf_firing:     defw txt_bf1,txt_bf2,txt_bf3,0
-txt_bf1:        defb "FIRING",0
-txt_bf2:        defb "DUCK HIGH - JUMP LOW",0
-txt_bf3:        defb "PAINT ROUNDS - 45 SEC",0
 
 ; --- the closing lines ------------------------------------------------
 txt_mg_report:  defb "REPORTED - SHIFT OVER",0
 txt_mg_shift1:  defb "PERFECT SHIFT - A LIFE",0
 txt_mg_shift2:  defb "SHIFT SERVED",0
 txt_mg_voided:  defb "BONUS VOIDED BY ORDER",0
-txt_mg_quota:   defb "QUOTA MET",0
+txt_mg_quota:   defb "QUOTA MET - ENERGY UP",0
 txt_mg_missed:  defb "QUOTA MISSED",0
-txt_mg_poor:    defb "COME BACK WITH 50",0
-txt_hk_energy:  defb "A RATION PACK",0
-txt_hk_life:    defb "A SMUGGLERS STASH",0
-txt_hk_scrap:   defb "GOOD SCRAP - 50",0
-txt_hk_junk:    defb "JUNK - 10",0
+txt_mg_poor:    defb "COME BACK WITH 50 POINTS",0
+txt_hk_energy:  defb "RATIONS - ENERGY",0     ; each says what it paid
+txt_hk_life:    defb "STASH - A LIFE",0
+txt_hk_scrap:   defb "SCRAP - 50 POINTS",0
+txt_hk_junk:    defb "JUNK - 10 POINTS",0
 txt_mg_house:   defb "THE HOUSE THANKS YOU",0
 txt_mg_sold:    defb "STOCK SOLD OUT",0
 txt_mg_eye:     defb "THE EYE SAW YOU",0
 txt_mg_foul:    defb "IT FOULED AGAIN",0
-txt_mg_clear:   defb "BOILER CLEAN",0
+txt_mg_clear:   defb "ALL CLEAN - ENERGY UP",0
 txt_mg_clean:   defb "CLEAN SHEET - A LIFE",0
-txt_mg_pay:     defb "HAZARD PAY",0
+txt_mg_pay:     defb "HAZARD PAY - ENERGY UP",0
 
 hidata_end:
         assert hidata_end <= #C000              ; below screen buffer A

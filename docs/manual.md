@@ -259,9 +259,14 @@ at two marquees — one low, one high — and each door plays you **once,
 ever**. When its arrow is dark that show is finished for this run:
 leaving the level and coming back will not reopen it.
 
-Every one of them opens with a **briefing card**: the name of the job
-and the two rules that matter. Read it and press `SPACE` — or stand
-there thinking about it, and it starts on its own after ten seconds.
+Every one of them opens with a **briefing card**: the name of the job,
+the rules that matter in three or four lines, and what it pays. Read
+it and press `SPACE` — or stand there thinking about it, and it starts
+on its own after ten seconds.
+
+Inside, the top line keeps the books: on the left, what is still to do
+(or what you have left) beside a picture of it; in the middle, your
+energy and lives; on the right, the clock, for the jobs that have one.
 
 `ESC` walks you out of any of them at any moment — the card, the game,
 the verdict. The doorway counts it as your turn all the same.

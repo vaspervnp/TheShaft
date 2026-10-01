@@ -112,6 +112,9 @@ spr_rat_w:
 spr_hook:
         jp _i_spr_hook
         nop
+spr_slag:
+        jp _i_spr_slag
+        nop
 
 _i_spr_mech_r:
         inc hl
@@ -4332,65 +4335,65 @@ _i_spr_rat_a:
         inc hl
         call spr_next_row
         inc hl
-        ld (hl),#CC
+        ld (hl),#F0
         inc hl
         ld a,(hl)
         and #AA
-        or #44
+        or #50
         ld (hl),a
         inc hl
         inc hl
         call spr_next_row
         ld a,(hl)
         and #AA
-        or #44
+        or #50
         ld (hl),a
-        inc hl
-        ld (hl),#CC
-        inc hl
-        ld (hl),#CC
-        inc hl
-        inc hl
-        call spr_next_row
-        ld (hl),#CC
         inc hl
         ld (hl),#F0
         inc hl
-        ld (hl),#CC
+        ld (hl),#F0
+        inc hl
+        inc hl
+        call spr_next_row
+        ld (hl),#F0
+        inc hl
+        ld (hl),#FC
+        inc hl
+        ld (hl),#F0
         inc hl
         ld a,(hl)
         and #55
-        or #88
+        or #A0
         ld (hl),a
         inc hl
         call spr_next_row
-        ld (hl),#CC
+        ld (hl),#F0
         inc hl
-        ld (hl),#CC
+        ld (hl),#F0
         inc hl
-        ld (hl),#CC
+        ld (hl),#F0
         inc hl
-        ld (hl),#CC
+        ld (hl),#F0
         inc hl
         call spr_next_row
         ld a,(hl)
         and #AA
-        or #44
+        or #50
         ld (hl),a
         inc hl
         ld a,(hl)
         and #AA
-        or #44
+        or #50
         ld (hl),a
         inc hl
         ld a,(hl)
         and #AA
-        or #44
+        or #50
         ld (hl),a
         inc hl
         ld a,(hl)
         and #AA
-        or #44
+        or #50
         ld (hl),a
         inc hl
         ret
@@ -4569,6 +4572,59 @@ _i_spr_hook:
         and #55
         or #80
         ld (hl),a
+        inc hl
+        inc hl
+        ret
+
+_i_spr_slag:
+        inc hl
+        ld (hl),#F0
+        inc hl
+        inc hl
+        inc hl
+        call spr_next_row
+        ld a,(hl)
+        and #AA
+        or #50
+        ld (hl),a
+        inc hl
+        ld (hl),#FC
+        inc hl
+        ld a,(hl)
+        and #55
+        or #A0
+        ld (hl),a
+        inc hl
+        inc hl
+        call spr_next_row
+        ld a,(hl)
+        and #AA
+        or #50
+        ld (hl),a
+        inc hl
+        ld (hl),#FC
+        inc hl
+        ld (hl),#F8
+        inc hl
+        inc hl
+        call spr_next_row
+        ld a,(hl)
+        and #AA
+        or #50
+        ld (hl),a
+        inc hl
+        ld (hl),#FC
+        inc hl
+        ld a,(hl)
+        and #55
+        or #A0
+        ld (hl),a
+        inc hl
+        inc hl
+        call spr_next_row
+        inc hl
+        ld (hl),#F0
+        inc hl
         inc hl
         inc hl
         ret
